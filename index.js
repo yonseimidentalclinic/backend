@@ -1,4 +1,4 @@
-('dotenv').config(); require// .env 파일의 환경 변수를 불러옵니다. (코드 최상단에 위치)
+require('dotenv').config(); // .env 파일의 환경 변수를 불러옵니다. (코드 최상단에 위치)
 
 const express = require('express');
 const cors = require('cors');
@@ -16,6 +16,7 @@ app.use(express.json());
 // Render 서버에서는 Render의 환경 변수를 통해 값을 가져옵니다.
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
+  // Render와 같은 프로덕션 환경에서는 SSL 연결이 필요합니다.
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
