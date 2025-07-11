@@ -12,12 +12,13 @@ app.use(cors());
 app.use(express.json());
 
 // --- 데이터베이스 연결 설정 ---
-// 이제 process.env.DATABASE_URL은 로컬에서는 .env 파일을 통해,
-// Render 서버에서는 Render의 환경 변수를 통해 값을 가져옵니다.
+// Render 데이터베이스는 항상 SSL/TLS 보안 연결을 요구합니다.
+// 따라서 로컬 개발 환경과 Render 서버 환경 모두에 SSL 설정을 적용합니다.
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  // Render와 같은 프로덕션 환경에서는 SSL 연결이 필요합니다.
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  ssl: {
+    rejectUnauthorized: false
+  }
 });
 
 // --- 데이터베이스 테이블 생성 함수 ---
