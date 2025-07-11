@@ -17,7 +17,6 @@ const pool = new Pool({
   }
 });
 
-// --- 'contacts' 테이블 생성 함수 ---
 const createContactsTable = async () => {
   const queryText = `
     CREATE TABLE IF NOT EXISTS contacts (
@@ -36,7 +35,6 @@ const createContactsTable = async () => {
   }
 };
 
-// --- 'notices' 테이블 생성 및 초기 데이터 추가 함수 (새로 추가) ---
 const createNoticesTable = async () => {
   const tableQuery = `
     CREATE TABLE IF NOT EXISTS notices (
@@ -50,7 +48,6 @@ const createNoticesTable = async () => {
     await pool.query(tableQuery);
     console.log("'notices' 테이블이 성공적으로 준비되었습니다.");
 
-    // 테이블이 비어있을 경우에만 초기 데이터 삽입
     const res = await pool.query('SELECT COUNT(*) FROM notices');
     if (res.rows[0].count === '0') {
       console.log("'notices' 테이블에 초기 데이터를 추가합니다.");
@@ -86,7 +83,7 @@ app.post('/api/contact', async (req, res) => {
   }
 });
 
-// --- 공지사항 목록을 가져오는 API (새로 추가) ---
+// --- 공지사항 목록을 가져오는 API ---
 app.get('/api/notices', async (req, res) => {
   try {
     const queryText = 'SELECT * FROM notices ORDER BY created_at DESC';
@@ -98,11 +95,27 @@ app.get('/api/notices', async (req, res) => {
   }
 });
 
+// --- 단일 공지사항을 가져오는 API (새로 추가) ---
+app.get('/api/notices/:id', async (req, res) => {
+  const { id } = req.params; // URL에서 id 파라미터 추출
+  try {
+    const queryText = 'SELECT * FROM notices WHERE id = $1';
+    const { rows } = await pool.query(queryText, [id]);
+    if (rows.length > 0) {
+      res.status(200).json(rows[0]);
+    } else {
+      res.status(404).json({ success: false, message: '해당 공지사항을 찾을 수 없습니다.' });
+    }
+  } catch (err) {
+    console.error('단일 공지사항 조회 중 오류 발생:', err);
+    res.status(500).json({ success: false, message: '공지사항을 불러오는 데 실패했습니다.' });
+  }
+});
+
 
 // --- 서버 실행 및 테이블 생성 ---
 app.listen(port, () => {
   console.log(`백엔드 서버가 ${port}번 포트에서 실행 중입니다.`);
-  // 서버가 켜지면 두 개의 테이블을 모두 준비합니다.
   createContactsTable();
   createNoticesTable();
 });
