@@ -1,0 +1,5 @@
+# .env 파일을 Git 추적에서 제외
+.env
+
+# node_modules 폴더 제외
+node_modules
