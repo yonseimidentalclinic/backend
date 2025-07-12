@@ -3,11 +3,12 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
-const bcrypt = require('bcrypt'); // 비밀번호 암호화를 위한 라이브러리
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken'); // 1. jsonwebtoken 라이브러리 추가
 
 const app = express();
 const port = process.env.PORT || 3001;
-const saltRounds = 10; // bcrypt 암호화 강도
+const saltRounds = 10;
 
 app.use(cors());
 app.use(express.json());
@@ -19,7 +20,7 @@ const pool = new Pool({
   }
 });
 
-// --- 테이블 생성 함수들 ---
+// ... (기존 테이블 생성 함수들은 동일) ...
 const createTables = async () => {
   const contactsTableQuery = `
     CREATE TABLE IF NOT EXISTS contacts (
@@ -38,7 +39,6 @@ const createTables = async () => {
       created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     );
   `;
-  // 온라인 상담 테이블 (새로 추가)
   const consultationsTableQuery = `
     CREATE TABLE IF NOT EXISTS consultations (
       id SERIAL PRIMARY KEY,
@@ -60,8 +60,9 @@ const createTables = async () => {
   }
 };
 
+
 // --- API 라우트(경로) 설정 ---
-// ... (기존 /api/contact, /api/notices API들은 동일) ...
+// ... (기존 API들은 동일) ...
 app.get('/', (req, res) => {
   res.send('연세미치과 백엔드 서버가 정상적으로 동작 중입니다.');
 });
@@ -102,11 +103,6 @@ app.get('/api/notices/:id', async (req, res) => {
     res.status(500).json({ success: false, message: '공지사항을 불러오는 데 실패했습니다.' });
   }
 });
-
-
-// --- 온라인 상담 API (새로 추가) ---
-
-// 1. 새로운 상담 글 작성
 app.post('/api/consultations', async (req, res) => {
   const { author, password, title, content, is_secret } = req.body;
   if (!author || !password || !title || !content) {
@@ -123,11 +119,8 @@ app.post('/api/consultations', async (req, res) => {
     res.status(500).json({ success: false, message: '서버 오류로 글 등록에 실패했습니다.' });
   }
 });
-
-// 2. 상담 글 목록 조회
 app.get('/api/consultations', async (req, res) => {
   try {
-    // 비밀번호와 내용은 제외하고 목록을 가져옵니다.
     const queryText = 'SELECT id, author, title, is_secret, created_at FROM consultations ORDER BY created_at DESC';
     const { rows } = await pool.query(queryText);
     res.status(200).json(rows);
@@ -136,12 +129,9 @@ app.get('/api/consultations', async (req, res) => {
     res.status(500).json({ success: false, message: '목록을 불러오는 데 실패했습니다.' });
   }
 });
-
-// 3. 특정 상담 글 상세 조회 (비밀번호 확인 후)
 app.get('/api/consultations/:id', async (req, res) => {
   const { id } = req.params;
   try {
-    // 내용은 제외하고 가져옵니다 (비밀번호 확인 전)
     const queryText = 'SELECT id, author, title, is_secret, created_at FROM consultations WHERE id = $1';
     const { rows } = await pool.query(queryText, [id]);
     if (rows.length > 0) {
@@ -154,8 +144,6 @@ app.get('/api/consultations/:id', async (req, res) => {
     res.status(500).json({ success: false, message: '글을 불러오는 데 실패했습니다.' });
   }
 });
-
-// 4. 비밀번호 확인 및 내용 반환
 app.post('/api/consultations/:id/verify', async (req, res) => {
   const { id } = req.params;
   const { password } = req.body;
@@ -168,7 +156,6 @@ app.post('/api/consultations/:id/verify', async (req, res) => {
     const consultation = rows[0];
     const match = await bcrypt.compare(password, consultation.password);
     if (match) {
-      // 비밀번호가 일치하면 전체 내용을 보내줍니다.
       res.status(200).json({ success: true, consultation });
     } else {
       res.status(401).json({ success: false, message: '비밀번호가 일치하지 않습니다.' });
@@ -176,6 +163,25 @@ app.post('/api/consultations/:id/verify', async (req, res) => {
   } catch (err) {
     console.error('비밀번호 확인 중 오류 발생:', err);
     res.status(500).json({ success: false, message: '서버 오류가 발생했습니다.' });
+  }
+});
+
+
+// --- 관리자 로그인 API (새로 추가) ---
+app.post('/api/admin/login', (req, res) => {
+  const { password } = req.body;
+  
+  // .env 파일에 저장된 관리자 비밀번호와 비교
+  if (password === process.env.ADMIN_PASSWORD) {
+    // 로그인이 성공하면, 토큰을 생성해서 보내줍니다.
+    const token = jwt.sign(
+      { isAdmin: true }, // 토큰에 담을 정보
+      process.env.JWT_SECRET, // 토큰 서명에 사용할 비밀 키
+      { expiresIn: '3h' } // 토큰 유효기간 (3시간)
+    );
+    res.status(200).json({ success: true, token });
+  } else {
+    res.status(401).json({ success: false, message: '비밀번호가 올바르지 않습니다.' });
   }
 });
 
