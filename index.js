@@ -40,27 +40,33 @@ app.put('/api/admin/notices/:id', verifyToken, async (req, res) => { const { id 
 app.delete('/api/admin/notices/:id', verifyToken, async (req, res) => { const { id } = req.params; try { await pool.query('DELETE FROM notices WHERE id = $1', [id]); res.status(200).json({ success: true, message: '공지사항이 성공적으로 삭제되었습니다.' }); } catch (err) { console.error('공지사항 삭제 중 오류 발생:', err); res.status(500).json({ success: false, message: '서버 오류로 삭제에 실패했습니다.' }); } });
 
 
-// --- 관리자 상담 목록 API 수정 (페이지네이션 적용) ---
+// --- 관리자 상담 목록 API 수정 (검색 기능 추가) ---
 app.get('/api/admin/consultations', verifyToken, async (req, res) => {
-  // 1. 페이지 번호와 페이지당 항목 수를 쿼리에서 가져옵니다.
   const page = parseInt(req.query.page || '1', 10);
   const limit = parseInt(req.query.limit || '10', 10);
   const offset = (page - 1) * limit;
+  const searchTerm = req.query.search || ''; // 1. 검색어(search)를 쿼리에서 가져옵니다.
+
+  let whereClause = '';
+  const values = [limit, offset];
+  
+  // 2. 검색어가 있으면, WHERE 절을 동적으로 만듭니다.
+  if (searchTerm) {
+    whereClause = `WHERE title ILIKE $3 OR author ILIKE $3`;
+    values.push(`%${searchTerm}%`); // ILIKE는 대소문자를 구분하지 않는 검색입니다.
+  }
 
   try {
-    // 2. 전체 항목 수를 세는 쿼리와, 해당 페이지의 데이터만 가져오는 쿼리를 동시에 실행합니다.
-    const countQuery = 'SELECT COUNT(*) FROM consultations';
-    const dataQuery = 'SELECT id, title, author, is_secret, reply, created_at FROM consultations ORDER BY created_at DESC LIMIT $1 OFFSET $2';
+    const countQuery = `SELECT COUNT(*) FROM consultations ${whereClause}`;
+    const dataQuery = `SELECT id, title, author, is_secret, reply, created_at FROM consultations ${whereClause} ORDER BY created_at DESC LIMIT $1 OFFSET $2`;
     
-    const [countResult, dataResult] = await Promise.all([
-      pool.query(countQuery),
-      pool.query(dataQuery, [limit, offset])
-    ]);
+    // 검색어가 있을 경우와 없을 경우를 구분하여 쿼리 실행
+    const countResult = await pool.query(countQuery, searchTerm ? [`%${searchTerm}%`] : []);
+    const dataResult = await pool.query(dataQuery, values);
 
     const totalItems = parseInt(countResult.rows[0].count, 10);
     const totalPages = Math.ceil(totalItems / limit);
 
-    // 3. 데이터와 함께 전체 페이지 수, 현재 페이지 정보를 응답으로 보냅니다.
     res.status(200).json({
       data: dataResult.rows,
       pagination: {
