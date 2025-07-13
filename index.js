@@ -20,9 +20,36 @@ const pool = new Pool({
   }
 });
 
-// ... (테이블 생성 함수 및 다른 API들은 이전과 동일) ...
-const createTables = async () => { const contactsTableQuery = `CREATE TABLE IF NOT EXISTS contacts (id SERIAL PRIMARY KEY, name VARCHAR(100) NOT NULL, email VARCHAR(100) NOT NULL, message TEXT NOT NULL, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);`; const noticesTableQuery = `CREATE TABLE IF NOT EXISTS notices (id SERIAL PRIMARY KEY, title VARCHAR(255) NOT NULL, content TEXT NOT NULL, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);`; const consultationsTableQuery = ` CREATE TABLE IF NOT EXISTS consultations ( id SERIAL PRIMARY KEY, author VARCHAR(100) NOT NULL, password VARCHAR(255) NOT NULL, title VARCHAR(255) NOT NULL, content TEXT NOT NULL, is_secret BOOLEAN DEFAULT false, reply TEXT, replied_at TIMESTAMP WITH TIME ZONE, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP ); `; const postsTableQuery = ` CREATE TABLE IF NOT EXISTS posts ( id SERIAL PRIMARY KEY, author VARCHAR(100) NOT NULL, title VARCHAR(255) NOT NULL, content TEXT NOT NULL, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP ); `; try { await pool.query(contactsTableQuery); await pool.query(noticesTableQuery); await pool.query(consultationsTableQuery); await pool.query(postsTableQuery); console.log("모든 테이블이 성공적으로 준비되었습니다."); } catch (err) { console.error("테이블 생성 중 오류 발생:", err); } };
-const verifyToken = (req, res, next) => { const authHeader = req.headers['authorization']; const token = authHeader && authHeader.split(' ')[1]; if (token == null) return res.sendStatus(401); jwt.verify(token, process.env.JWT_SECRET, (err, user) => { if (err) return res.sendStatus(403); req.user = user; next(); }); };
+// --- 테이블 생성 함수들 ---
+const createTables = async () => {
+    const contactsTableQuery = `CREATE TABLE IF NOT EXISTS contacts (id SERIAL PRIMARY KEY, name VARCHAR(100) NOT NULL, email VARCHAR(100) NOT NULL, message TEXT NOT NULL, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);`;
+    const noticesTableQuery = `CREATE TABLE IF NOT EXISTS notices (id SERIAL PRIMARY KEY, title VARCHAR(255) NOT NULL, content TEXT NOT NULL, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);`;
+    const consultationsTableQuery = ` CREATE TABLE IF NOT EXISTS consultations ( id SERIAL PRIMARY KEY, author VARCHAR(100) NOT NULL, password VARCHAR(255) NOT NULL, title VARCHAR(255) NOT NULL, content TEXT NOT NULL, is_secret BOOLEAN DEFAULT false, reply TEXT, replied_at TIMESTAMP WITH TIME ZONE, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP ); `;
+    const postsTableQuery = ` CREATE TABLE IF NOT EXISTS posts ( id SERIAL PRIMARY KEY, author VARCHAR(100) NOT NULL, title VARCHAR(255) NOT NULL, content TEXT NOT NULL, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP ); `;
+    try {
+        await pool.query(contactsTableQuery);
+        await pool.query(noticesTableQuery);
+        await pool.query(consultationsTableQuery);
+        await pool.query(postsTableQuery);
+        console.log("모든 테이블이 성공적으로 준비되었습니다.");
+    } catch (err) {
+        console.error("테이블 생성 중 오류 발생:", err);
+    }
+};
+
+// --- 관리자 인증 미들웨어 ---
+const verifyToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (token == null) return res.sendStatus(401);
+  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    if (err) return res.sendStatus(403);
+    req.user = user;
+    next();
+  });
+};
+
+// --- 사용자 API ---
 app.get('/', (req, res) => { res.send('연세미치과 백엔드 서버가 정상적으로 동작 중입니다.'); });
 app.post('/api/contact', async (req, res) => { const { name, email, message } = req.body; const queryText = 'INSERT INTO contacts(name, email, message) VALUES($1, $2, $3) RETURNING *'; const values = [name, email, message]; try { await pool.query(queryText, values); res.status(201).json({ success: true, message: '문의가 성공적으로 접수되어 데이터베이스에 저장되었습니다.' }); } catch (err) { console.error('데이터베이스 저장 중 오류 발생:', err); res.status(500).json({ success: false, message: '서버 내부 오류로 문의 접수에 실패했습니다.' }); } });
 app.get('/api/notices', async (req, res) => { try { const queryText = 'SELECT * FROM notices ORDER BY created_at DESC'; const result = await pool.query(queryText); res.status(200).json(result.rows); } catch (err) { console.error('공지사항 조회 중 오류 발생:', err); res.status(500).json({ success: false, message: '공지사항을 불러오는 데 실패했습니다.' }); } });
