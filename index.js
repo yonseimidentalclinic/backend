@@ -135,13 +135,28 @@ app.get('/api/consultations', async (req, res) => {
     try {
         const totalResult = await pool.query('SELECT COUNT(*) FROM consultations');
         const totalPages = Math.ceil(totalResult.rows[0].count / limit);
+        // 안정성과 성능이 더 뛰어난 EXISTS 서브쿼리로 답변 여부 확인
         const result = await pool.query(`
-            SELECT c.id, c.title, c.author, c.is_secret, c.created_at, r.id AS reply_id
+            SELECT 
+                c.id, 
+                c.title, 
+                c.author, 
+                c.is_secret, 
+                c.created_at, 
+                EXISTS(SELECT 1 FROM replies r WHERE r.consultation_id = c.id) AS has_reply
             FROM consultations c
-            LEFT JOIN replies r ON c.id = r.consultation_id
-            ORDER BY c.created_at DESC LIMIT $1 OFFSET $2
+            ORDER BY c.created_at DESC 
+            LIMIT $1 OFFSET $2
         `, [limit, offset]);
-        const consultations = result.rows.map(c => ({ ...c, isSecret: c.is_secret, createdAt: c.created_at, replyId: c.reply_id }));
+        // has_reply 값을 기준으로 replyId를 생성하여 프론트엔드로 전달
+        const consultations = result.rows.map(c => ({ 
+            id: c.id,
+            title: c.title,
+            author: c.author,
+            isSecret: c.is_secret, 
+            createdAt: c.created_at, 
+            replyId: c.has_reply ? c.id : null 
+        }));
         res.json({ consultations, totalPages });
     } catch (err) {
         console.error('Error fetching consultations:', err.stack);
@@ -169,7 +184,17 @@ app.get('/api/consultations/:id', async (req, res) => {
         `, [req.params.id]);
         if (result.rows.length === 0) return res.status(404).json({ error: 'Consultation not found' });
         const data = result.rows[0];
-        const consultation = { ...data, createdAt: data.created_at, isSecret: data.is_secret, replyId: data.reply_id, replyContent: data.reply_content, replyCreatedAt: data.reply_created_at };
+        const consultation = { 
+            id: data.id,
+            title: data.title,
+            author: data.author,
+            content: data.content,
+            createdAt: data.created_at, 
+            isSecret: data.is_secret, 
+            replyId: data.reply_id, 
+            replyContent: data.reply_content, 
+            replyCreatedAt: data.reply_created_at 
+        };
         res.json(consultation);
     } catch (err) {
         console.error(`Error fetching consultation ${req.params.id}:`, err.stack);
