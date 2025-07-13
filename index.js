@@ -56,14 +56,11 @@ app.post('/api/admin/login', async (req, res) => {
 
 app.get('/api/admin/dashboard', authenticateToken, async (req, res) => {
   try {
-    const noticeResult = await pool.query('SELECT id, title, created_at FROM notices ORDER BY created_at DESC LIMIT 5');
-    const consultationResult = await pool.query('SELECT id, title, author, created_at FROM consultations ORDER BY created_at DESC LIMIT 5');
+    // DB 컬럼명을 "camelCase"로 수정 (PostgreSQL에서 대소문자 구분은 큰따옴표 사용)
+    const noticeResult = await pool.query('SELECT id, title, "createdAt" FROM notices ORDER BY "createdAt" DESC LIMIT 5');
+    const consultationResult = await pool.query('SELECT id, title, author, "createdAt" FROM consultations ORDER BY "createdAt" DESC LIMIT 5');
     
-    // DB의 snake_case 컬럼명을 프론트엔드의 camelCase로 변환
-    const notices = noticeResult.rows.map(n => ({ ...n, createdAt: n.created_at }));
-    const consultations = consultationResult.rows.map(c => ({ ...c, createdAt: c.created_at }));
-
-    res.json({ notices, consultations });
+    res.json({ notices: noticeResult.rows, consultations: consultationResult.rows });
   } catch (err) {
     console.error('Error fetching dashboard data:', err.stack);
     res.status(500).json({ error: 'Server error while fetching dashboard data' });
@@ -78,9 +75,8 @@ app.get('/api/notices', async (req, res) => {
     try {
         const totalResult = await pool.query('SELECT COUNT(*) FROM notices');
         const totalPages = Math.ceil(totalResult.rows[0].count / limit);
-        const result = await pool.query('SELECT id, title, created_at FROM notices ORDER BY created_at DESC LIMIT $1 OFFSET $2', [limit, offset]);
-        const notices = result.rows.map(n => ({ ...n, createdAt: n.created_at }));
-        res.json({ notices, totalPages });
+        const result = await pool.query('SELECT id, title, "createdAt" FROM notices ORDER BY "createdAt" DESC LIMIT $1 OFFSET $2', [limit, offset]);
+        res.json({ notices: result.rows, totalPages });
     } catch (err) {
         console.error('Error fetching notices:', err.stack);
         res.status(500).json({ error: 'Server error while fetching notices' });
@@ -88,10 +84,9 @@ app.get('/api/notices', async (req, res) => {
 });
 app.get('/api/notices/:id', async (req, res) => {
   try {
-    const result = await pool.query('SELECT id, title, content, created_at, updated_at FROM notices WHERE id = $1', [req.params.id]);
+    const result = await pool.query('SELECT id, title, content, "createdAt", "updatedAt" FROM notices WHERE id = $1', [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Notice not found' });
-    const notice = { ...result.rows[0], createdAt: result.rows[0].created_at, updatedAt: result.rows[0].updated_at };
-    res.json(notice);
+    res.json(result.rows[0]);
   } catch (err) {
     console.error(`Error fetching notice ${req.params.id}:`, err.stack);
     res.status(500).json({ error: 'Server error' });
@@ -110,7 +105,7 @@ app.post('/api/notices', authenticateToken, async (req, res) => {
 app.put('/api/notices/:id', authenticateToken, async (req, res) => {
     const { title, content } = req.body;
     try {
-        const result = await pool.query('UPDATE notices SET title = $1, content = $2, updated_at = NOW() WHERE id = $3 RETURNING *', [title, content, req.params.id]);
+        const result = await pool.query('UPDATE notices SET title = $1, content = $2, "updatedAt" = NOW() WHERE id = $3 RETURNING *', [title, content, req.params.id]);
         res.json(result.rows[0]);
     } catch (err) {
         console.error(`Error updating notice ${req.params.id}:`, err.stack);
@@ -135,28 +130,19 @@ app.get('/api/consultations', async (req, res) => {
     try {
         const totalResult = await pool.query('SELECT COUNT(*) FROM consultations');
         const totalPages = Math.ceil(totalResult.rows[0].count / limit);
-        // 안정성과 성능이 더 뛰어난 EXISTS 서브쿼리로 답변 여부 확인
         const result = await pool.query(`
             SELECT 
                 c.id, 
                 c.title, 
                 c.author, 
-                c.is_secret, 
-                c.created_at, 
-                EXISTS(SELECT 1 FROM replies r WHERE r.consultation_id = c.id) AS has_reply
+                c."isSecret", 
+                c."createdAt", 
+                EXISTS(SELECT 1 FROM replies r WHERE r."consultationId" = c.id) AS "hasReply"
             FROM consultations c
-            ORDER BY c.created_at DESC 
+            ORDER BY c."createdAt" DESC 
             LIMIT $1 OFFSET $2
         `, [limit, offset]);
-        // has_reply 값을 기준으로 replyId를 생성하여 프론트엔드로 전달
-        const consultations = result.rows.map(c => ({ 
-            id: c.id,
-            title: c.title,
-            author: c.author,
-            isSecret: c.is_secret, 
-            createdAt: c.created_at, 
-            replyId: c.has_reply ? c.id : null 
-        }));
+        const consultations = result.rows.map(c => ({ ...c, replyId: c.hasReply ? c.id : null }));
         res.json({ consultations, totalPages });
     } catch (err) {
         console.error('Error fetching consultations:', err.stack);
@@ -167,7 +153,7 @@ app.post('/api/consultations', async (req, res) => {
     const { title, author, password, content, isSecret } = req.body;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
     try {
-        await pool.query('INSERT INTO consultations (title, author, password, content, is_secret) VALUES ($1, $2, $3, $4, $5)', [title, author, hashedPassword, content, isSecret]);
+        await pool.query('INSERT INTO consultations (title, author, password, content, "isSecret") VALUES ($1, $2, $3, $4, $5)', [title, author, hashedPassword, content, isSecret]);
         res.status(201).send('Consultation created');
     } catch (err) {
         console.error('Error creating consultation:', err.stack);
@@ -177,25 +163,13 @@ app.post('/api/consultations', async (req, res) => {
 app.get('/api/consultations/:id', async (req, res) => {
     try {
         const result = await pool.query(`
-            SELECT c.id, c.title, c.author, c.content, c.created_at, c.is_secret, r.id as reply_id, r.content as reply_content, r.created_at as reply_created_at
+            SELECT c.id, c.title, c.author, c.content, c."createdAt", c."isSecret", r.id as "replyId", r.content as "replyContent", r."createdAt" as "replyCreatedAt"
             FROM consultations c
-            LEFT JOIN replies r ON c.id = r.consultation_id
+            LEFT JOIN replies r ON c.id = r."consultationId"
             WHERE c.id = $1
         `, [req.params.id]);
         if (result.rows.length === 0) return res.status(404).json({ error: 'Consultation not found' });
-        const data = result.rows[0];
-        const consultation = { 
-            id: data.id,
-            title: data.title,
-            author: data.author,
-            content: data.content,
-            createdAt: data.created_at, 
-            isSecret: data.is_secret, 
-            replyId: data.reply_id, 
-            replyContent: data.reply_content, 
-            replyCreatedAt: data.reply_created_at 
-        };
-        res.json(consultation);
+        res.json(result.rows[0]);
     } catch (err) {
         console.error(`Error fetching consultation ${req.params.id}:`, err.stack);
         res.status(500).json({ error: 'Server error' });
@@ -203,7 +177,7 @@ app.get('/api/consultations/:id', async (req, res) => {
 });
 app.delete('/api/consultations/:id', authenticateToken, async (req, res) => {
     try {
-        await pool.query('DELETE FROM replies WHERE consultation_id = $1', [req.params.id]);
+        await pool.query('DELETE FROM replies WHERE "consultationId" = $1', [req.params.id]);
         await pool.query('DELETE FROM consultations WHERE id = $1', [req.params.id]);
         res.status(204).send();
     } catch (err) {
@@ -214,7 +188,7 @@ app.delete('/api/consultations/:id', authenticateToken, async (req, res) => {
 app.post('/api/consultations/:id/reply', authenticateToken, async (req, res) => {
     const { content } = req.body;
     try {
-        await pool.query('INSERT INTO replies (content, consultation_id) VALUES ($1, $2)', [content, req.params.id]);
+        await pool.query('INSERT INTO replies (content, "consultationId") VALUES ($1, $2)', [content, req.params.id]);
         res.status(201).send('Reply created');
     } catch (err) {
         console.error(`Error creating reply for consultation ${req.params.id}:`, err.stack);
@@ -224,7 +198,7 @@ app.post('/api/consultations/:id/reply', authenticateToken, async (req, res) => 
 app.put('/api/consultations/replies/:replyId', authenticateToken, async (req, res) => {
     const { content } = req.body;
     try {
-        await pool.query('UPDATE replies SET content = $1, updated_at = NOW() WHERE id = $2', [content, req.params.replyId]);
+        await pool.query('UPDATE replies SET content = $1, "updatedAt" = NOW() WHERE id = $2', [content, req.params.replyId]);
         res.send('Reply updated');
     } catch (err) {
         console.error(`Error updating reply ${req.params.replyId}:`, err.stack);
@@ -241,9 +215,8 @@ app.get('/api/posts', async (req, res) => {
     try {
         const totalResult = await pool.query('SELECT COUNT(*) FROM posts');
         const totalPages = Math.ceil(totalResult.rows[0].count / limit);
-        const result = await pool.query('SELECT id, title, author, created_at FROM posts ORDER BY created_at DESC LIMIT $1 OFFSET $2', [limit, offset]);
-        const posts = result.rows.map(p => ({ ...p, createdAt: p.created_at }));
-        res.json({ posts, totalPages });
+        const result = await pool.query('SELECT id, title, author, "createdAt" FROM posts ORDER BY "createdAt" DESC LIMIT $1 OFFSET $2', [limit, offset]);
+        res.json({ posts: result.rows, totalPages });
     } catch (err) {
         console.error('Error fetching posts:', err.stack);
         res.status(500).json({ error: 'Server error' });
@@ -256,9 +229,8 @@ app.get('/api/admin/posts', authenticateToken, async (req, res) => {
     try {
         const totalResult = await pool.query('SELECT COUNT(*) FROM posts');
         const totalPages = Math.ceil(totalResult.rows[0].count / limit);
-        const result = await pool.query('SELECT id, title, author, created_at FROM posts ORDER BY created_at DESC LIMIT $1 OFFSET $2', [limit, offset]);
-        const posts = result.rows.map(p => ({ ...p, createdAt: p.created_at }));
-        res.json({ posts, totalPages });
+        const result = await pool.query('SELECT id, title, author, "createdAt" FROM posts ORDER BY "createdAt" DESC LIMIT $1 OFFSET $2', [limit, offset]);
+        res.json({ posts: result.rows, totalPages });
     } catch (err) {
         console.error('Error fetching posts for admin:', err.stack);
         res.status(500).json({ error: 'Server error' });
