@@ -1,20 +1,26 @@
-// 필요한 모듈들을 가져옵니다.
+// =================================================================
+// 연세미치과 홈페이지 백엔드 최종 안정화 코드 (index.js)
+// 최종 업데이트: 2025년 7월 14일
+// 주요 기능:
+// 1. 서버 시작 시 DB 테이블 자동 생성 (오류 원천 차단)
+// 2. DB 컬럼명 불일치 문제 해결 (snake_case 사용)
+// 3. 관리자 인증(JWT) 및 모든 API 엔드포인트 구현
+// =================================================================
+
+// 1. 모듈 임포트
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
-const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 
-// Express 앱을 생성합니다.
+// 2. Express 앱 및 기본 미들웨어 설정
 const app = express();
-const saltRounds = 10;
+app.use(cors()); // CORS 허용
+app.use(express.json()); // 요청 본문의 JSON 파싱
 
-// 미들웨어를 설정합니다.
-app.use(cors());
-app.use(express.json());
-
-// 데이터베이스 연결 풀(Pool)을 생성합니다.
+// 3. 데이터베이스 연결 풀 설정
+// Render.com의 PostgreSQL 연결 시 SSL 옵션이 필요합니다.
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
@@ -22,320 +28,411 @@ const pool = new Pool({
   },
 });
 
-// ====================================================================
-// (가장 중요) 서버 시작 시 데이터베이스 테이블을 자동으로 생성하는 함수
-// ====================================================================
-const initializeDatabase = async () => {
+// 4. (핵심) 데이터베이스 자동 초기화 함수
+async function initializeDatabase() {
   const client = await pool.connect();
   try {
-    // 1. notices 테이블 생성 (없을 경우에만)
-    await client.query(`
+    console.log('데이터베이스에 성공적으로 연결되었습니다.');
+    console.log('필수 테이블의 존재 여부를 확인하고, 없으면 자동 생성을 시작합니다...');
+
+    // 테이블 생성 쿼리 (IF NOT EXISTS 구문으로 중복 생성 방지)
+    // 모든 컬럼명은 데이터베이스 표준인 snake_case로 작성합니다.
+    const createNoticesTable = `
       CREATE TABLE IF NOT EXISTS notices (
         id SERIAL PRIMARY KEY,
-        title TEXT NOT NULL,
+        title VARCHAR(255) NOT NULL,
         content TEXT NOT NULL,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
-    `);
-    console.log('Table "notices" is ready.');
+    `;
 
-    // 2. posts 테이블 생성 (없을 경우에만)
-    await client.query(`
+    const createPostsTable = `
       CREATE TABLE IF NOT EXISTS posts (
         id SERIAL PRIMARY KEY,
-        title TEXT NOT NULL,
-        author VARCHAR(255) NOT NULL,
+        author VARCHAR(100) NOT NULL,
         password VARCHAR(255) NOT NULL,
+        title VARCHAR(255) NOT NULL,
         content TEXT NOT NULL,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
-    `);
-    console.log('Table "posts" is ready.');
-    
-    // 3. consultations 테이블 생성 (없을 경우에만)
-    await client.query(`
+    `;
+
+    const createConsultationsTable = `
       CREATE TABLE IF NOT EXISTS consultations (
         id SERIAL PRIMARY KEY,
-        title TEXT NOT NULL,
-        author VARCHAR(255) NOT NULL,
+        author VARCHAR(100) NOT NULL,
         password VARCHAR(255) NOT NULL,
+        title VARCHAR(255) NOT NULL,
         content TEXT NOT NULL,
         is_secret BOOLEAN DEFAULT TRUE,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        is_answered BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
-    `);
-    console.log('Table "consultations" is ready.');
+    `;
 
-    // 4. replies 테이블 생성 (없을 경우에만)
-    await client.query(`
+    // (결정적 원인이었던) replies 테이블 생성
+    const createRepliesTable = `
       CREATE TABLE IF NOT EXISTS replies (
         id SERIAL PRIMARY KEY,
-        content TEXT NOT NULL,
         consultation_id INTEGER NOT NULL REFERENCES consultations(id) ON DELETE CASCADE,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        content TEXT NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
-    `);
-    console.log('Table "replies" is ready.');
+    `;
 
+    // 각 테이블 생성 쿼리 실행
+    await client.query(createNoticesTable);
+    console.log('- "notices" 테이블이 준비되었습니다.');
+
+    await client.query(createPostsTable);
+    console.log('- "posts" 테이블이 준비되었습니다.');
+
+    await client.query(createConsultationsTable);
+    console.log('- "consultations" 테이블이 준비되었습니다.');
+
+    await client.query(createRepliesTable);
+    console.log('- "replies" 테이블이 준비되었습니다.');
+
+    console.log('데이터베이스 자동 초기화가 성공적으로 완료되었습니다.');
   } catch (err) {
-    console.error('Error initializing database:', err.stack);
+    console.error('데이터베이스 초기화 중 심각한 오류가 발생했습니다:', err);
+    // 초기화 실패 시, 불완전한 상태로 서버가 실행되는 것을 막기 위해 프로세스 종료
+    process.exit(1);
   } finally {
+    // 사용한 클라이언트 연결 반환
     client.release();
   }
+}
+
+// 5. 유틸리티 함수
+// DB에서 가져온 snake_case 키를 프론트엔드에서 사용할 camelCase로 변환
+const toCamelCase = (rows) => {
+  return rows.map(row => {
+    const newRow = {};
+    for (let key in row) {
+      const camelKey = key.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
+      newRow[camelKey] = row[key];
+    }
+    return newRow;
+  });
 };
 
-
-// JWT 토큰 검증 미들웨어
+// 6. 관리자 인증 미들웨어
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-  if (token == null) return res.sendStatus(401);
+  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+
+  if (token == null) return res.sendStatus(401); // 토큰이 없음
 
   jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-    if (err) return res.sendStatus(403);
+    if (err) return res.sendStatus(403); // 토큰이 유효하지 않음
     req.user = user;
     next();
   });
 };
 
-// --- API 라우트 ---
+// =================================================================
+// API 라우트 (Routes)
+// =================================================================
 
-// 서버 상태 확인
-app.get('/', (req, res) => {
-  res.send('연세미치과 백엔드 서버가 정상적으로 작동 중입니다.');
-});
-
-// --- 관리자 API ---
-app.post('/api/admin/login', async (req, res) => {
+// --- 관리자 로그인 ---
+app.post('/api/admin/login', (req, res) => {
   const { password } = req.body;
-  const adminPassword = process.env.ADMIN_PASSWORD;
-  if (password === adminPassword) {
-    const accessToken = jwt.sign({ username: 'admin' }, process.env.JWT_SECRET, { expiresIn: '1d' });
+  if (password === process.env.ADMIN_PASSWORD) {
+    const user = { name: 'admin' };
+    const accessToken = jwt.sign(user, process.env.JWT_SECRET, { expiresIn: '12h' });
     res.json({ accessToken });
   } else {
-    res.status(401).send('비밀번호가 일치하지 않습니다.');
+    res.status(401).send('비밀번호가 올바르지 않습니다.');
   }
 });
 
-app.get('/api/admin/dashboard', authenticateToken, async (req, res) => {
-  try {
-    const noticeResult = await pool.query('SELECT id, title, created_at FROM notices ORDER BY created_at DESC LIMIT 5');
-    const consultationResult = await pool.query('SELECT id, title, author, created_at FROM consultations ORDER BY created_at DESC LIMIT 5');
-    
-    // DB의 snake_case 컬럼명을 프론트엔드의 camelCase로 변환
-    const notices = noticeResult.rows.map(n => ({ ...n, createdAt: n.created_at }));
-    const consultations = consultationResult.rows.map(c => ({ ...c, createdAt: c.created_at }));
-
-    res.json({ notices, consultations });
-  } catch (err) {
-    console.error('Error fetching dashboard data:', err.stack);
-    res.status(500).json({ error: 'Server error while fetching dashboard data' });
-  }
-});
-
-// --- 공지사항 API ---
+// --- 공지사항 (Notices) API ---
+// GET (All) - Public
 app.get('/api/notices', async (req, res) => {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const offset = (page - 1) * limit;
-    try {
-        const totalResult = await pool.query('SELECT COUNT(*) FROM notices');
-        const totalPages = Math.ceil(totalResult.rows[0].count / limit);
-        const result = await pool.query('SELECT id, title, created_at FROM notices ORDER BY created_at DESC LIMIT $1 OFFSET $2', [limit, offset]);
-        const notices = result.rows.map(n => ({ ...n, createdAt: n.created_at }));
-        res.json({ notices, totalPages });
-    } catch (err) {
-        console.error('Error fetching notices:', err.stack);
-        res.status(500).json({ error: 'Server error while fetching notices' });
-    }
-});
-app.get('/api/notices/:id', async (req, res) => {
   try {
-    const result = await pool.query('SELECT id, title, content, created_at, updated_at FROM notices WHERE id = $1', [req.params.id]);
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Notice not found' });
-    const notice = { ...result.rows[0], createdAt: result.rows[0].created_at, updatedAt: result.rows[0].updated_at };
-    res.json(notice);
+    const result = await pool.query('SELECT * FROM notices ORDER BY created_at DESC');
+    res.json(toCamelCase(result.rows));
   } catch (err) {
-    console.error(`Error fetching notice ${req.params.id}:`, err.stack);
-    res.status(500).json({ error: 'Server error' });
+    console.error(err);
+    res.status(500).send('서버 오류');
   }
 });
-app.post('/api/notices', authenticateToken, async (req, res) => {
-    const { title, content } = req.body;
+// GET (One) - Public
+app.get('/api/notices/:id', async (req, res) => {
     try {
-        const result = await pool.query('INSERT INTO notices (title, content) VALUES ($1, $2) RETURNING *', [title, content]);
-        res.status(201).json(result.rows[0]);
+      const result = await pool.query('SELECT * FROM notices WHERE id = $1', [req.params.id]);
+      if (result.rows.length === 0) return res.status(404).send('공지사항을 찾을 수 없습니다.');
+      res.json(toCamelCase(result.rows)[0]);
     } catch (err) {
-        console.error('Error creating notice:', err.stack);
-        res.status(500).json({ error: 'Server error' });
+      console.error(err);
+      res.status(500).send('서버 오류');
     }
 });
-app.put('/api/notices/:id', authenticateToken, async (req, res) => {
+// POST (Admin)
+app.post('/api/admin/notices', authenticateToken, async (req, res) => {
     const { title, content } = req.body;
     try {
-        const result = await pool.query('UPDATE notices SET title = $1, content = $2, updated_at = NOW() WHERE id = $3 RETURNING *', [title, content, req.params.id]);
-        res.json(result.rows[0]);
+        const result = await pool.query(
+            'INSERT INTO notices (title, content) VALUES ($1, $2) RETURNING *',
+            [title, content]
+        );
+        res.status(201).json(toCamelCase(result.rows)[0]);
     } catch (err) {
-        console.error(`Error updating notice ${req.params.id}:`, err.stack);
-        res.status(500).json({ error: 'Server error' });
+        console.error(err);
+        res.status(500).send('서버 오류');
     }
 });
-app.delete('/api/notices/:id', authenticateToken, async (req, res) => {
+// PUT (Admin)
+app.put('/api/admin/notices/:id', authenticateToken, async (req, res) => {
+    const { title, content } = req.body;
     try {
-        await pool.query('DELETE FROM notices WHERE id = $1', [req.params.id]);
+        const result = await pool.query(
+            'UPDATE notices SET title = $1, content = $2, updated_at = NOW() WHERE id = $3 RETURNING *',
+            [title, content, req.params.id]
+        );
+        if (result.rows.length === 0) return res.status(404).send('공지사항을 찾을 수 없습니다.');
+        res.json(toCamelCase(result.rows)[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).send('서버 오류');
+    }
+});
+// DELETE (Admin)
+app.delete('/api/admin/notices/:id', authenticateToken, async (req, res) => {
+    try {
+        const result = await pool.query('DELETE FROM notices WHERE id = $1', [req.params.id]);
+        if (result.rowCount === 0) return res.status(404).send('공지사항을 찾을 수 없습니다.');
+        res.status(204).send(); // No Content
+    } catch (err) {
+        console.error(err);
+        res.status(500).send('서버 오류');
+    }
+});
+
+// --- 자유게시판 (Posts) API ---
+// GET (All) - Public
+app.get('/api/posts', async (req, res) => {
+    try {
+        const result = await pool.query('SELECT id, title, author, created_at, updated_at FROM posts ORDER BY created_at DESC');
+        res.json(toCamelCase(result.rows));
+    } catch (err) {
+        console.error(err);
+        res.status(500).send('서버 오류');
+    }
+});
+// GET (One) - Public
+app.get('/api/posts/:id', async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM posts WHERE id = $1', [req.params.id]);
+        if (result.rows.length === 0) return res.status(404).send('게시글을 찾을 수 없습니다.');
+        res.json(toCamelCase(result.rows)[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).send('서버 오류');
+    }
+});
+// POST - Public
+app.post('/api/posts', async (req, res) => {
+    const { author, password, title, content } = req.body;
+    try {
+        const result = await pool.query(
+            'INSERT INTO posts (author, password, title, content) VALUES ($1, $2, $3, $4) RETURNING *',
+            [author, password, title, content]
+        );
+        res.status(201).json(toCamelCase(result.rows)[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).send('서버 오류');
+    }
+});
+// DELETE (Admin)
+app.delete('/api/admin/posts/:id', authenticateToken, async (req, res) => {
+    try {
+        const result = await pool.query('DELETE FROM posts WHERE id = $1', [req.params.id]);
+        if (result.rowCount === 0) return res.status(404).send('게시글을 찾을 수 없습니다.');
         res.status(204).send();
     } catch (err) {
-        console.error(`Error deleting notice ${req.params.id}:`, err.stack);
-        res.status(500).json({ error: 'Server error' });
+        console.error(err);
+        res.status(500).send('서버 오류');
     }
 });
 
-// --- 온라인 상담 API ---
+
+// --- 온라인 상담 (Consultations) API ---
+// GET (All) - Public (답변 여부, 비밀글 여부 포함)
 app.get('/api/consultations', async (req, res) => {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const offset = (page - 1) * limit;
     try {
-        const totalResult = await pool.query('SELECT COUNT(*) FROM consultations');
-        const totalPages = Math.ceil(totalResult.rows[0].count / limit);
-        const result = await pool.query(`
-            SELECT 
-                c.id, c.title, c.author, c.is_secret, c.created_at, 
-                EXISTS(SELECT 1 FROM replies r WHERE r.consultation_id = c.id) AS has_reply
-            FROM consultations c
-            ORDER BY c.created_at DESC 
-            LIMIT $1 OFFSET $2
-        `, [limit, offset]);
-        const consultations = result.rows.map(c => ({ 
-            id: c.id,
-            title: c.title,
-            author: c.author,
-            isSecret: c.is_secret, 
-            createdAt: c.created_at, 
-            replyId: c.has_reply ? c.id : null 
-        }));
-        res.json({ consultations, totalPages });
+        const result = await pool.query('SELECT id, title, author, created_at, is_secret, is_answered FROM consultations ORDER BY created_at DESC');
+        res.json(toCamelCase(result.rows));
     } catch (err) {
-        console.error('Error fetching consultations:', err.stack);
-        res.status(500).json({ error: 'Server error while fetching consultations' });
+        console.error(err);
+        res.status(500).send('서버 오류');
     }
 });
-app.post('/api/consultations', async (req, res) => {
-    const { title, author, password, content, isSecret } = req.body;
-    const hashedPassword = await bcrypt.hash(password, saltRounds);
-    try {
-        await pool.query('INSERT INTO consultations (title, author, password, content, is_secret) VALUES ($1, $2, $3, $4, $5)', [title, author, hashedPassword, content, isSecret]);
-        res.status(201).send('Consultation created');
-    } catch (err) {
-        console.error('Error creating consultation:', err.stack);
-        res.status(500).json({ error: 'Server error' });
-    }
-});
+// GET (One) - Public (관리자는 비밀글도 바로 볼 수 있음)
 app.get('/api/consultations/:id', async (req, res) => {
     try {
-        const result = await pool.query(`
-            SELECT c.id, c.title, c.author, c.content, c.created_at, c.is_secret, r.id as reply_id, r.content as reply_content, r.created_at as reply_created_at
-            FROM consultations c
-            LEFT JOIN replies r ON c.id = r.consultation_id
-            WHERE c.id = $1
-        `, [req.params.id]);
-        if (result.rows.length === 0) return res.status(404).json({ error: 'Consultation not found' });
-        const data = result.rows[0];
-        const consultation = { 
-            id: data.id, title: data.title, author: data.author, content: data.content,
-            createdAt: data.created_at, isSecret: data.is_secret, 
-            replyId: data.reply_id, replyContent: data.reply_content, replyCreatedAt: data.reply_created_at 
-        };
-        res.json(consultation);
+        const consultationResult = await pool.query('SELECT * FROM consultations WHERE id = $1', [req.params.id]);
+        if (consultationResult.rows.length === 0) return res.status(404).send('상담글을 찾을 수 없습니다.');
+        
+        const replyResult = await pool.query('SELECT * FROM replies WHERE consultation_id = $1 ORDER BY created_at DESC', [req.params.id]);
+
+        const consultation = toCamelCase(consultationResult.rows)[0];
+        const replies = toCamelCase(replyResult.rows);
+
+        res.json({ ...consultation, replies });
     } catch (err) {
-        console.error(`Error fetching consultation ${req.params.id}:`, err.stack);
-        res.status(500).json({ error: 'Server error' });
+        console.error(err);
+        res.status(500).send('서버 오류');
     }
 });
-app.delete('/api/consultations/:id', authenticateToken, async (req, res) => {
+// POST - Public
+app.post('/api/consultations', async (req, res) => {
+    const { author, password, title, content, isSecret } = req.body;
     try {
-        await pool.query('DELETE FROM replies WHERE consultation_id = $1', [req.params.id]);
-        await pool.query('DELETE FROM consultations WHERE id = $1', [req.params.id]);
+        const result = await pool.query(
+            'INSERT INTO consultations (author, password, title, content, is_secret) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+            [author, password, title, content, isSecret]
+        );
+        res.status(201).json(toCamelCase(result.rows)[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).send('서버 오류');
+    }
+});
+// 비밀글 비밀번호 확인
+app.post('/api/consultations/:id/verify', async (req, res) => {
+    try {
+        const { password } = req.body;
+        const result = await pool.query('SELECT password FROM consultations WHERE id = $1', [req.params.id]);
+        if (result.rows.length === 0) return res.status(404).send('상담글을 찾을 수 없습니다.');
+        
+        if (result.rows[0].password === password) {
+            res.json({ success: true });
+        } else {
+            res.json({ success: false });
+        }
+    } catch (err) {
+        console.error(err);
+        res.status(500).send('서버 오류');
+    }
+});
+// DELETE (Admin)
+app.delete('/api/admin/consultations/:id', authenticateToken, async (req, res) => {
+    try {
+        // ON DELETE CASCADE 옵션 덕분에 상담글을 지우면 답변글도 함께 지워집니다.
+        const result = await pool.query('DELETE FROM consultations WHERE id = $1', [req.params.id]);
+        if (result.rowCount === 0) return res.status(404).send('상담글을 찾을 수 없습니다.');
         res.status(204).send();
     } catch (err) {
-        console.error(`Error deleting consultation ${req.params.id}:`, err.stack);
-        res.status(500).json({ error: 'Server error' });
-    }
-});
-app.post('/api/consultations/:id/reply', authenticateToken, async (req, res) => {
-    const { content } = req.body;
-    try {
-        await pool.query('INSERT INTO replies (content, consultation_id) VALUES ($1, $2)', [content, req.params.id]);
-        res.status(201).send('Reply created');
-    } catch (err) {
-        console.error(`Error creating reply for consultation ${req.params.id}:`, err.stack);
-        res.status(500).json({ error: 'Server error' });
-    }
-});
-app.put('/api/consultations/replies/:replyId', authenticateToken, async (req, res) => {
-    const { content } = req.body;
-    try {
-        await pool.query('UPDATE replies SET content = $1, updated_at = NOW() WHERE id = $2', [content, req.params.replyId]);
-        res.send('Reply updated');
-    } catch (err) {
-        console.error(`Error updating reply ${req.params.replyId}:`, err.stack);
-        res.status(500).json({ error: 'Server error' });
+        console.error(err);
+        res.status(500).send('서버 오류');
     }
 });
 
 
-// --- 자유게시판 API ---
-app.get('/api/posts', async (req, res) => {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const offset = (page - 1) * limit;
+// --- 상담 답변 (Replies) API ---
+// POST (Admin)
+app.post('/api/admin/consultations/:id/replies', authenticateToken, async (req, res) => {
+    const consultationId = req.params.id;
+    const { content } = req.body;
+    const client = await pool.connect();
     try {
-        const totalResult = await pool.query('SELECT COUNT(*) FROM posts');
-        const totalPages = Math.ceil(totalResult.rows[0].count / limit);
-        const result = await pool.query('SELECT id, title, author, created_at FROM posts ORDER BY created_at DESC LIMIT $1 OFFSET $2', [limit, offset]);
-        const posts = result.rows.map(p => ({ ...p, createdAt: p.created_at }));
-        res.json({ posts, totalPages });
+        await client.query('BEGIN'); // 트랜잭션 시작
+        
+        const replyResult = await client.query(
+            'INSERT INTO replies (consultation_id, content) VALUES ($1, $2) RETURNING *',
+            [consultationId, content]
+        );
+
+        // 답변이 달리면 is_answered 상태를 true로 변경
+        await client.query(
+            'UPDATE consultations SET is_answered = TRUE, updated_at = NOW() WHERE id = $1',
+            [consultationId]
+        );
+
+        await client.query('COMMIT'); // 트랜잭션 커밋
+        res.status(201).json(toCamelCase(replyResult.rows)[0]);
     } catch (err) {
-        console.error('Error fetching posts:', err.stack);
-        res.status(500).json({ error: 'Server error' });
+        await client.query('ROLLBACK'); // 오류 발생 시 롤백
+        console.error(err);
+        res.status(500).send('서버 오류');
+    } finally {
+        client.release();
     }
 });
-app.get('/api/admin/posts', authenticateToken, async (req, res) => {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const offset = (page - 1) * limit;
+// PUT (Admin)
+app.put('/api/admin/replies/:id', authenticateToken, async (req, res) => {
+    const { content } = req.body;
     try {
-        const totalResult = await pool.query('SELECT COUNT(*) FROM posts');
-        const totalPages = Math.ceil(totalResult.rows[0].count / limit);
-        const result = await pool.query('SELECT id, title, author, created_at FROM posts ORDER BY created_at DESC LIMIT $1 OFFSET $2', [limit, offset]);
-        const posts = result.rows.map(p => ({ ...p, createdAt: p.created_at }));
-        res.json({ posts, totalPages });
+        const result = await pool.query(
+            'UPDATE replies SET content = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
+            [content, req.params.id]
+        );
+        if (result.rows.length === 0) return res.status(404).send('답변을 찾을 수 없습니다.');
+        res.json(toCamelCase(result.rows)[0]);
     } catch (err) {
-        console.error('Error fetching posts for admin:', err.stack);
-        res.status(500).json({ error: 'Server error' });
+        console.error(err);
+        res.status(500).send('서버 오류');
     }
 });
-app.delete('/api/posts/:id', authenticateToken, async (req, res) => {
+// DELETE (Admin)
+app.delete('/api/admin/replies/:id', authenticateToken, async (req, res) => {
+    const client = await pool.connect();
     try {
-        await pool.query('DELETE FROM posts WHERE id = $1', [req.params.id]);
+        await client.query('BEGIN');
+        
+        // 먼저 어떤 상담글에 속한 답변인지 찾음
+        const reply = await client.query('SELECT consultation_id FROM replies WHERE id = $1', [req.params.id]);
+        if (reply.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).send('답변을 찾을 수 없습니다.');
+        }
+        const { consultation_id } = reply.rows[0];
+
+        // 답변 삭제
+        await client.query('DELETE FROM replies WHERE id = $1', [req.params.id]);
+        
+        // 해당 상담글에 다른 답변이 남아있는지 확인
+        const remainingReplies = await client.query('SELECT id FROM replies WHERE consultation_id = $1', [consultation_id]);
+        
+        // 다른 답변이 없으면 is_answered 상태를 false로 되돌림
+        if (remainingReplies.rows.length === 0) {
+            await client.query('UPDATE consultations SET is_answered = FALSE WHERE id = $1', [consultation_id]);
+        }
+        
+        await client.query('COMMIT');
         res.status(204).send();
     } catch (err) {
-        console.error(`Error deleting post ${req.params.id}:`, err.stack);
-        res.status(500).json({ error: 'Server error' });
+        await client.query('ROLLBACK');
+        console.error(err);
+        res.status(500).send('서버 오류');
+    } finally {
+        client.release();
     }
 });
 
 
-// 서버를 시작합니다.
+// =================================================================
+// 서버 실행
+// =================================================================
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, async () => {
-  console.log(`서버가 ${PORT}번 포트에서 실행 중입니다.`);
-  
-  // 서버가 시작된 후, 데이터베이스 초기화 함수를 실행합니다.
-  await initializeDatabase();
-});
 
+// 서버 시작 전, 반드시 데이터베이스 초기화 함수를 먼저 실행합니다.
+initializeDatabase()
+  .then(() => {
+    // DB 초기화가 성공하면 서버를 시작합니다.
+    app.listen(PORT, () => {
+      console.log(`백엔드 서버가 포트 ${PORT}에서 성공적으로 실행되었습니다.`);
+      console.log('UptimeRobot 등을 이용해 이 주소로 주기적인 요청을 보내면 Cold Start를 방지할 수 있습니다.');
+    });
+  })
+  .catch(err => {
+    // DB 초기화가 실패하면 서버를 시작하지 않습니다.
+    console.error('서버 시작에 실패했습니다. 데이터베이스 연결 및 설정 정보를 확인해주세요.', err);
+  });
