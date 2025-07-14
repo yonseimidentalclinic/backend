@@ -22,6 +22,73 @@ const pool = new Pool({
   },
 });
 
+// ====================================================================
+// (가장 중요) 서버 시작 시 데이터베이스 테이블을 자동으로 생성하는 함수
+// ====================================================================
+const initializeDatabase = async () => {
+  const client = await pool.connect();
+  try {
+    // 1. notices 테이블 생성 (없을 경우에만)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS notices (
+        id SERIAL PRIMARY KEY,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    console.log('Table "notices" is ready.');
+
+    // 2. posts 테이블 생성 (없을 경우에만)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS posts (
+        id SERIAL PRIMARY KEY,
+        title TEXT NOT NULL,
+        author VARCHAR(255) NOT NULL,
+        password VARCHAR(255) NOT NULL,
+        content TEXT NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    console.log('Table "posts" is ready.');
+    
+    // 3. consultations 테이블 생성 (없을 경우에만)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS consultations (
+        id SERIAL PRIMARY KEY,
+        title TEXT NOT NULL,
+        author VARCHAR(255) NOT NULL,
+        password VARCHAR(255) NOT NULL,
+        content TEXT NOT NULL,
+        is_secret BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    console.log('Table "consultations" is ready.');
+
+    // 4. replies 테이블 생성 (없을 경우에만)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS replies (
+        id SERIAL PRIMARY KEY,
+        content TEXT NOT NULL,
+        consultation_id INTEGER NOT NULL REFERENCES consultations(id) ON DELETE CASCADE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    console.log('Table "replies" is ready.');
+
+  } catch (err) {
+    console.error('Error initializing database:', err.stack);
+  } finally {
+    client.release();
+  }
+};
+
+
 // JWT 토큰 검증 미들웨어
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
@@ -59,7 +126,6 @@ app.get('/api/admin/dashboard', authenticateToken, async (req, res) => {
     const noticeResult = await pool.query('SELECT id, title, created_at FROM notices ORDER BY created_at DESC LIMIT 5');
     const consultationResult = await pool.query('SELECT id, title, author, created_at FROM consultations ORDER BY created_at DESC LIMIT 5');
     
-    // DB의 snake_case 컬럼명을 프론트엔드의 camelCase로 변환
     const notices = noticeResult.rows.map(n => ({ ...n, createdAt: n.created_at }));
     const consultations = consultationResult.rows.map(c => ({ ...c, createdAt: c.created_at }));
 
@@ -261,11 +327,14 @@ app.delete('/api/posts/:id', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Server error' });
     }
 });
-// (이하 다른 게시판 API들은 생략)
 
 
 // 서버를 시작합니다.
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`서버가 ${PORT}번 포트에서 실행 중입니다.`);
+  
+  // 서버가 시작된 후, 데이터베이스 초기화 함수를 실행합니다.
+  await initializeDatabase();
 });
+
