@@ -138,6 +138,11 @@ const authenticateToken = (req, res, next) => {
 // =================================================================
 // API 라우트 (Routes)
 // =================================================================
+// Render/UptimeRobot Health Check를 위한 루트 경로 핸들러
+// app.all은 GET, HEAD 등 모든 요청 방식에 응답합니다.
+app.all('/', (req, res) => {
+  res.send('연세미치과 백엔드 서버가 정상적으로 작동 중입니다.');
+});
 
 // --- 관리자 로그인 ---
 app.post('/api/admin/login', (req, res) => {
