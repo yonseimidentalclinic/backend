@@ -126,6 +126,7 @@ app.get('/api/admin/dashboard', authenticateToken, async (req, res) => {
     const noticeResult = await pool.query('SELECT id, title, created_at FROM notices ORDER BY created_at DESC LIMIT 5');
     const consultationResult = await pool.query('SELECT id, title, author, created_at FROM consultations ORDER BY created_at DESC LIMIT 5');
     
+    // DB의 snake_case 컬럼명을 프론트엔드의 camelCase로 변환
     const notices = noticeResult.rows.map(n => ({ ...n, createdAt: n.created_at }));
     const consultations = consultationResult.rows.map(c => ({ ...c, createdAt: c.created_at }));
 
