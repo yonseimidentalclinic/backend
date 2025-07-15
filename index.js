@@ -1,13 +1,9 @@
 // =================================================================
-// 연세미치과 홈페이지 백엔드 최종 코드 (index.js)
-// 최종 업데이트: 2025년 7월 15일
-// 주요 개선사항:
-// 1. Render.com 환경 변수 충돌 방지 코드 적용
-// 2. 이미지 업로드를 위한 요청 크기 제한 상향 조정
-// 3. 모든 기능이 포함된 최종 안정화 버전
+// 연세미치과 홈페이지 백엔드 최종 코드 (진단 기능 포함)
+// 주요 기능:
+// 1. 서버가 연결된 DB의 테이블 구조를 직접 확인할 수 있는 /api/debug/check-db 엔드포인트 추가
 // =================================================================
 
-// 1. [수정] 배포 환경에서는 .env 파일을 무시하도록 설정하여 충돌 방지
 if (process.env.NODE_ENV !== 'production') {
   require('dotenv').config();
 }
@@ -17,12 +13,10 @@ const cors = require('cors');
 const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
 
-// 2. [수정] 요청 본문의 크기 제한을 늘립니다 (이미지 데이터 전송을 위해)
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// 3. 데이터베이스 연결 풀 설정
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
@@ -30,7 +24,6 @@ const pool = new Pool({
   },
 });
 
-// 4. 데이터베이스 자동 초기화 함수
 async function initializeDatabase() {
   const client = await pool.connect();
   try {
@@ -54,16 +47,10 @@ async function initializeDatabase() {
     `;
 
     await client.query(createNoticesTable);
-    console.log('- "notices" 테이블이 준비되었습니다.');
     await client.query(createPostsTable);
-    console.log('- "posts" 테이블이 준비되었습니다.');
     await client.query(createConsultationsTable);
-    console.log('- "consultations" 테이블이 준비되었습니다.');
     await client.query(createRepliesTable);
-    console.log('- "replies" 테이블이 준비되었습니다.');
     await client.query(createDoctorsTable);
-    console.log('- "doctors" 테이블이 준비되었습니다.');
-
     console.log('모든 테이블이 준비되었습니다.');
 
   } catch (err) {
@@ -74,75 +61,67 @@ async function initializeDatabase() {
   }
 }
 
-// 5. 유틸리티 함수
-const toCamelCase = (rows) => {
-  return rows.map(row => {
-    const newRow = {};
-    for (let key in row) {
-      const camelKey = key.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
-      newRow[camelKey] = row[key];
-    }
-    return newRow;
-  });
-};
-
-// 6. 관리자 인증 미들웨어
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-  if (token == null) return res.sendStatus(401);
-  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-    if (err) return res.sendStatus(403);
-    req.user = user;
-    next();
-  });
-};
+const toCamelCase = (rows) => { return rows.map(row => { const newRow = {}; for (let key in row) { const camelKey = key.replace(/_([a-z])/g, (g) => g[1].toUpperCase()); newRow[camelKey] = row[key]; } return newRow; }); };
+const authenticateToken = (req, res, next) => { const authHeader = req.headers['authorization']; const token = authHeader && authHeader.split(' ')[1]; if (token == null) return res.sendStatus(401); jwt.verify(token, process.env.JWT_SECRET, (err, user) => { if (err) return res.sendStatus(403); req.user = user; next(); }); };
 
 // =================================================================
 // API 라우트 (Routes)
 // =================================================================
 app.all('/', (req, res) => { res.send('연세미치과 백엔드 서버가 정상적으로 작동 중입니다.'); });
 
-// --- 관리자 로그인 ---
-app.post('/api/admin/login', (req, res) => {
-  const { password } = req.body;
-  if (password === process.env.ADMIN_PASSWORD) {
-    const user = { name: 'admin' };
-    const accessToken = jwt.sign(user, process.env.JWT_SECRET, { expiresIn: '12h' });
-    res.json({ accessToken });
-  } else {
-    res.status(401).send('비밀번호가 올바르지 않습니다.');
+// [핵심 추가] --- DB 상태 진단용 API ---
+app.get('/api/debug/check-db', async (req, res) => {
+  console.log('DB 상태 확인 요청을 받았습니다.');
+  const client = await pool.connect();
+  try {
+    const tables = ['notices', 'posts', 'consultations', 'replies', 'doctors'];
+    const schemaInfo = {};
+    for (const table of tables) {
+      const result = await client.query(`
+        SELECT column_name, data_type 
+        FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = '${table}';
+      `);
+      schemaInfo[table] = result.rows;
+    }
+    console.log('현재 DB 스키마 정보:', schemaInfo);
+    res.status(200).json(schemaInfo);
+  } catch (err) {
+    console.error('DB 상태 확인 중 오류 발생:', err);
+    res.status(500).json({ error: 'DB 스키마 정보를 가져오는 데 실패했습니다.', details: err.message });
+  } finally {
+    client.release();
   }
 });
 
-// --- 공지사항 (Notices) API ---
+// --- 기존 API 들 ---
+/* 모든 기존 API는 여기에 그대로 유지됩니다... */
+// 관리자 로그인
+app.post('/api/admin/login', (req, res) => { const { password } = req.body; if (password === process.env.ADMIN_PASSWORD) { const user = { name: 'admin' }; const accessToken = jwt.sign(user, process.env.JWT_SECRET, { expiresIn: '12h' }); res.json({ accessToken }); } else { res.status(401).send('비밀번호가 올바르지 않습니다.'); } });
+// 공지사항
 app.get('/api/notices', async (req, res) => { try { const result = await pool.query('SELECT * FROM notices ORDER BY created_at DESC'); res.json(toCamelCase(result.rows)); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 app.get('/api/notices/:id', async (req, res) => { try { const result = await pool.query('SELECT * FROM notices WHERE id = $1', [req.params.id]); if (result.rows.length === 0) return res.status(404).send('공지사항을 찾을 수 없습니다.'); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 app.post('/api/admin/notices', authenticateToken, async (req, res) => { const { title, content } = req.body; try { const result = await pool.query('INSERT INTO notices (title, content) VALUES ($1, $2) RETURNING *', [title, content]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 app.put('/api/admin/notices/:id', authenticateToken, async (req, res) => { const { title, content } = req.body; try { const result = await pool.query('UPDATE notices SET title = $1, content = $2, updated_at = NOW() WHERE id = $3 RETURNING *', [title, content, req.params.id]); if (result.rows.length === 0) return res.status(404).send('공지사항을 찾을 수 없습니다.'); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 app.delete('/api/admin/notices/:id', authenticateToken, async (req, res) => { try { const result = await pool.query('DELETE FROM notices WHERE id = $1', [req.params.id]); if (result.rowCount === 0) return res.status(404).send('공지사항을 찾을 수 없습니다.'); res.status(204).send(); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
-
-// --- 자유게시판 (Posts) API ---
+// 자유게시판
 app.get('/api/posts', async (req, res) => { try { const result = await pool.query('SELECT id, title, author, created_at, updated_at FROM posts ORDER BY created_at DESC'); res.json(toCamelCase(result.rows)); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 app.get('/api/posts/:id', async (req, res) => { try { const result = await pool.query('SELECT * FROM posts WHERE id = $1', [req.params.id]); if (result.rows.length === 0) return res.status(404).send('게시글을 찾을 수 없습니다.'); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 app.post('/api/posts', async (req, res) => { const { author, password, title, content } = req.body; try { const result = await pool.query('INSERT INTO posts (author, password, title, content) VALUES ($1, $2, $3, $4) RETURNING *', [author, password, title, content]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 app.put('/api/admin/posts/:id', authenticateToken, async (req, res) => { const { title, content } = req.body; try { const result = await pool.query('UPDATE posts SET title = $1, content = $2, updated_at = NOW() WHERE id = $3 RETURNING *', [title, content, req.params.id]); if (result.rows.length === 0) return res.status(404).send('게시글을 찾을 수 없습니다.'); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 app.delete('/api/admin/posts/:id', authenticateToken, async (req, res) => { try { const result = await pool.query('DELETE FROM posts WHERE id = $1', [req.params.id]); if (result.rowCount === 0) return res.status(404).send('게시글을 찾을 수 없습니다.'); res.status(204).send(); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
-
-// --- 온라인 상담 (Consultations) API ---
+// 온라인 상담
 app.get('/api/consultations', async (req, res) => { try { const result = await pool.query('SELECT id, title, author, created_at, is_secret, is_answered FROM consultations ORDER BY created_at DESC'); res.json(toCamelCase(result.rows)); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 app.get('/api/consultations/:id', async (req, res) => { try { const consultationResult = await pool.query('SELECT * FROM consultations WHERE id = $1', [req.params.id]); if (consultationResult.rows.length === 0) return res.status(404).send('상담글을 찾을 수 없습니다.'); const replyResult = await pool.query('SELECT * FROM replies WHERE consultation_id = $1 ORDER BY created_at DESC', [req.params.id]); const consultation = toCamelCase(consultationResult.rows)[0]; const replies = toCamelCase(replyResult.rows); res.json({ ...consultation, replies }); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 app.post('/api/consultations', async (req, res) => { const { author, password, title, content, isSecret } = req.body; try { const result = await pool.query('INSERT INTO consultations (author, password, title, content, is_secret) VALUES ($1, $2, $3, $4, $5) RETURNING *', [author, password, title, content, isSecret]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 app.put('/api/admin/consultations/:id', authenticateToken, async (req, res) => { const { title, content } = req.body; try { const result = await pool.query('UPDATE consultations SET title = $1, content = $2, updated_at = NOW() WHERE id = $3 RETURNING *', [title, content, req.params.id]); if (result.rows.length === 0) return res.status(404).send('상담글을 찾을 수 없습니다.'); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 app.post('/api/consultations/:id/verify', async (req, res) => { try { const { password } = req.body; const result = await pool.query('SELECT password FROM consultations WHERE id = $1', [req.params.id]); if (result.rows.length === 0) return res.status(404).send('상담글을 찾을 수 없습니다.'); if (result.rows[0].password === password) { res.json({ success: true }); } else { res.json({ success: false }); } } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 app.delete('/api/admin/consultations/:id', authenticateToken, async (req, res) => { try { const result = await pool.query('DELETE FROM consultations WHERE id = $1', [req.params.id]); if (result.rowCount === 0) return res.status(404).send('상담글을 찾을 수 없습니다.'); res.status(204).send(); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
-
-// --- 상담 답변 (Replies) API ---
+// 상담 답변
 app.post('/api/admin/consultations/:id/replies', authenticateToken, async (req, res) => { const consultationId = req.params.id; const { content } = req.body; const client = await pool.connect(); try { await client.query('BEGIN'); const replyResult = await client.query('INSERT INTO replies (consultation_id, content) VALUES ($1, $2) RETURNING *', [consultationId, content]); await client.query('UPDATE consultations SET is_answered = TRUE, updated_at = NOW() WHERE id = $1', [consultationId]); await client.query('COMMIT'); res.status(201).json(toCamelCase(replyResult.rows)[0]); } catch (err) { await client.query('ROLLBACK'); console.error(err); res.status(500).send('서버 오류'); } finally { client.release(); } });
 app.put('/api/admin/replies/:id', authenticateToken, async (req, res) => { const { content } = req.body; try { const result = await pool.query('UPDATE replies SET content = $1, updated_at = NOW() WHERE id = $2 RETURNING *', [content, req.params.id]); if (result.rows.length === 0) return res.status(404).send('답변을 찾을 수 없습니다.'); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 app.delete('/api/admin/replies/:id', authenticateToken, async (req, res) => { const client = await pool.connect(); try { await client.query('BEGIN'); const reply = await client.query('SELECT consultation_id FROM replies WHERE id = $1', [req.params.id]); if (reply.rows.length === 0) { await client.query('ROLLBACK'); return res.status(404).send('답변을 찾을 수 없습니다.'); } const { consultation_id } = reply.rows[0]; await client.query('DELETE FROM replies WHERE id = $1', [req.params.id]); const remainingReplies = await client.query('SELECT id FROM replies WHERE consultation_id = $1', [consultation_id]); if (remainingReplies.rows.length === 0) { await client.query('UPDATE consultations SET is_answered = FALSE WHERE id = $1', [consultation_id]); } await client.query('COMMIT'); res.status(204).send(); } catch (err) { await client.query('ROLLBACK'); console.error(err); res.status(500).send('서버 오류'); } finally { client.release(); } });
-
-// --- 의료진 (Doctors) API ---
+// 의료진
 app.get('/api/doctors', async (req, res) => { try { const result = await pool.query('SELECT * FROM doctors ORDER BY id ASC'); res.json(toCamelCase(result.rows)); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 app.post('/api/admin/doctors', authenticateToken, async (req, res) => { const { name, position, history, imageData } = req.body; try { const result = await pool.query('INSERT INTO doctors (name, position, history, image_data) VALUES ($1, $2, $3, $4) RETURNING *', [name, position, history, imageData]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 app.put('/api/admin/doctors/:id', authenticateToken, async (req, res) => { const { name, position, history, imageData } = req.body; try { const result = await pool.query('UPDATE doctors SET name = $1, position = $2, history = $3, image_data = $4, updated_at = NOW() WHERE id = $5 RETURNING *', [name, position, history, imageData, req.params.id]); if (result.rows.length === 0) return res.status(404).send('의료진 정보를 찾을 수 없습니다.'); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
