@@ -87,6 +87,19 @@ async function initializeDatabase() {
       );
     `;
 
+     // [핵심 추가] 의료진 테이블 생성 쿼리
+    const createDoctorsTable = `
+      CREATE TABLE IF NOT EXISTS doctors (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        position VARCHAR(100) NOT NULL,
+        history TEXT,
+        image_url VARCHAR(255),
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `;
+
     // 각 테이블 생성 쿼리 실행
     await client.query(createNoticesTable);
     console.log('- "notices" 테이블이 준비되었습니다.');
@@ -99,6 +112,9 @@ async function initializeDatabase() {
 
     await client.query(createRepliesTable);
     console.log('- "replies" 테이블이 준비되었습니다.');
+
+    await client.query(createDoctorsTable); // 의료진 테이블 생성
+    console.log('- "doctors" 테이블이 준비되었습니다.');
 
     console.log('데이터베이스 자동 초기화가 성공적으로 완료되었습니다.');
   } catch (err) {
@@ -457,6 +473,62 @@ app.delete('/api/admin/replies/:id', authenticateToken, async (req, res) => {
         res.status(500).send('서버 오류');
     } finally {
         client.release();
+    }
+});
+
+
+// [핵심 추가] --- 의료진 (Doctors) API ---
+// GET (All) - Public
+app.get('/api/doctors', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM doctors ORDER BY id ASC');
+    res.json(toCamelCase(result.rows));
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('서버 오류');
+  }
+});
+
+// POST (Admin)
+app.post('/api/admin/doctors', authenticateToken, async (req, res) => {
+    const { name, position, history, imageUrl } = req.body;
+    try {
+        const result = await pool.query(
+            'INSERT INTO doctors (name, position, history, image_url) VALUES ($1, $2, $3, $4) RETURNING *',
+            [name, position, history, imageUrl]
+        );
+        res.status(201).json(toCamelCase(result.rows)[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).send('서버 오류');
+    }
+});
+
+// PUT (Admin)
+app.put('/api/admin/doctors/:id', authenticateToken, async (req, res) => {
+    const { name, position, history, imageUrl } = req.body;
+    try {
+        const result = await pool.query(
+            'UPDATE doctors SET name = $1, position = $2, history = $3, image_url = $4, updated_at = NOW() WHERE id = $5 RETURNING *',
+            [name, position, history, imageUrl, req.params.id]
+        );
+        if (result.rows.length === 0) return res.status(404).send('의료진 정보를 찾을 수 없습니다.');
+        res.json(toCamelCase(result.rows)[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).send('서버 오류');
+    }
+});
+
+// DELETE (Admin)
+app.delete('/api/admin/doctors/:id', authenticateToken, async (req, res) => {
+    try {
+        const result = await pool.query('DELETE FROM doctors WHERE id = $1', [req.params.id]);
+        if (result.rowCount === 0) return res.status(404).send('의료진 정보를 찾을 수 없습니다.');
+        res.status(204).send();
+    } catch (err) {
+        console.error(err);
+        res.status(500).send('서버 오류');
     }
 });
 
