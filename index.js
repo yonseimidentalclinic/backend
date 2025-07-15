@@ -20,7 +20,7 @@ const jwt = require('jsonwebtoken');
 // 2. Express 앱 및 기본 미들웨어 설정
 const app = express();
 app.use(cors()); // CORS 허용
-app.use(express.json()); // 요청 본문의 JSON 파싱
+app.use(express.json({ limit: '10mb' })); // 10MB로 상향
 
 // 3. 데이터베이스 연결 풀 설정
 // Render.com의 PostgreSQL 연결 시 SSL 옵션이 필요합니다.
@@ -94,7 +94,7 @@ async function initializeDatabase() {
         name VARCHAR(100) NOT NULL,
         position VARCHAR(100) NOT NULL,
         history TEXT,
-        image_url VARCHAR(255),
+       image_data TEXT,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
@@ -491,11 +491,11 @@ app.get('/api/doctors', async (req, res) => {
 
 // POST (Admin)
 app.post('/api/admin/doctors', authenticateToken, async (req, res) => {
-    const { name, position, history, imageUrl } = req.body;
+    const { name, position, history, imageData } = req.body;
     try {
         const result = await pool.query(
-            'INSERT INTO doctors (name, position, history, image_url) VALUES ($1, $2, $3, $4) RETURNING *',
-            [name, position, history, imageUrl]
+            'INSERT INTO doctors (name, position, history, image_data) VALUES ($1, $2, $3, $4) RETURNING *',
+            [name, position, history, imageData]
         );
         res.status(201).json(toCamelCase(result.rows)[0]);
     } catch (err) {
@@ -506,11 +506,11 @@ app.post('/api/admin/doctors', authenticateToken, async (req, res) => {
 
 // PUT (Admin)
 app.put('/api/admin/doctors/:id', authenticateToken, async (req, res) => {
-    const { name, position, history, imageUrl } = req.body;
+    const { name, position, history, imageData } = req.body;
     try {
         const result = await pool.query(
-            'UPDATE doctors SET name = $1, position = $2, history = $3, image_url = $4, updated_at = NOW() WHERE id = $5 RETURNING *',
-            [name, position, history, imageUrl, req.params.id]
+            'UPDATE doctors SET name = $1, position = $2, history = $3, image_data = $4, updated_at = NOW() WHERE id = $5 RETURNING *',
+            [name, position, history, imageData, req.params.id]
         );
         if (result.rows.length === 0) return res.status(404).send('의료진 정보를 찾을 수 없습니다.');
         res.json(toCamelCase(result.rows)[0]);
