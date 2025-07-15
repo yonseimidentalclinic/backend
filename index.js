@@ -258,6 +258,23 @@ app.post('/api/posts', async (req, res) => {
         res.status(500).send('서버 오류');
     }
 });
+// [핵심 추가] 관리자 게시글 수정 (PUT)
+app.put('/api/admin/posts/:id', authenticateToken, async (req, res) => {
+    const { title, content } = req.body;
+    try {
+        const result = await pool.query(
+            'UPDATE posts SET title = $1, content = $2, updated_at = NOW() WHERE id = $3 RETURNING *',
+            [title, content, req.params.id]
+        );
+        if (result.rows.length === 0) return res.status(404).send('게시글을 찾을 수 없습니다.');
+        res.json(toCamelCase(result.rows)[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).send('서버 오류');
+    }
+});
+
+
 // DELETE (Admin)
 app.delete('/api/admin/posts/:id', authenticateToken, async (req, res) => {
     try {
