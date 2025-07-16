@@ -1,9 +1,9 @@
 // =================================================================
-// 연세미치과 홈페이지 백엔드 최종 코드 (Multer 파일 업로드 방식 적용)
+// 연세미치과 홈페이지 백엔드 최종 코드 (리사이징된 이미지 처리 방식)
 // 최종 업데이트: 2025년 7월 16일
 // 주요 개선사항:
-// 1. 표준 파일 업로드 라이브러리 'multer'를 도입하여 안정성 대폭 향상
-// 2. 이미지 데이터를 JSON이 아닌 multipart/form-data로 받아 처리
+// 1. 복잡한 파일 처리(multer) 대신, 리사이징된 Base64 이미지 데이터를 직접 받도록 단순화
+// 2. 이미지 데이터 처리를 위한 요청 크기 제한(10mb) 설정
 // =================================================================
 
 if (process.env.NODE_ENV !== 'production') {
@@ -14,17 +14,12 @@ const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
-const multer = require('multer'); // [핵심 추가] 파일 업로드 라이브러리
 
 const app = express();
 app.use(cors());
-// JSON과 URL-encoded 요청 본문을 처리합니다.
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// [핵심 추가] Multer 설정: 파일을 메모리에 버퍼 형태로 저장합니다.
-const storage = multer.memoryStorage();
-const upload = multer({ storage: storage });
+// 리사이징된 이미지(Base64)를 받기 위해 JSON 요청 크기 제한을 늘립니다.
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -128,8 +123,8 @@ app.delete('/api/admin/replies/:id', authenticateToken, async (req, res) => { co
 
 // --- 의료진 (Doctors) API ---
 app.get('/api/doctors', async (req, res) => { try { const result = await pool.query('SELECT * FROM doctors ORDER BY id ASC'); res.json(toCamelCase(result.rows)); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
-app.post('/api/admin/doctors', authenticateToken, upload.single('image'), async (req, res) => { const { name, position, history } = req.body; const imageData = req.file ? `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}` : null; try { const result = await pool.query('INSERT INTO doctors (name, position, history, image_data) VALUES ($1, $2, $3, $4) RETURNING *', [name, position, history, imageData]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error('의료진 추가 중 DB 오류:', err); res.status(500).send('서버 오류'); } });
-app.put('/api/admin/doctors/:id', authenticateToken, upload.single('image'), async (req, res) => { const { name, position, history, existingImageData } = req.body; const imageData = req.file ? `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}` : existingImageData; try { const result = await pool.query('UPDATE doctors SET name = $1, position = $2, history = $3, image_data = $4, updated_at = NOW() WHERE id = $5 RETURNING *', [name, position, history, imageData, req.params.id]); if (result.rows.length === 0) return res.status(404).send('의료진 정보를 찾을 수 없습니다.'); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error('의료진 수정 중 DB 오류:', err); res.status(500).send('서버 오류'); } });
+app.post('/api/admin/doctors', authenticateToken, async (req, res) => { const { name, position, history, imageData } = req.body; try { const result = await pool.query('INSERT INTO doctors (name, position, history, image_data) VALUES ($1, $2, $3, $4) RETURNING *', [name, position, history, imageData]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error('의료진 추가 중 DB 오류:', err); res.status(500).send('서버 오류'); } });
+app.put('/api/admin/doctors/:id', authenticateToken, async (req, res) => { const { name, position, history, imageData } = req.body; try { const result = await pool.query('UPDATE doctors SET name = $1, position = $2, history = $3, image_data = $4, updated_at = NOW() WHERE id = $5 RETURNING *', [name, position, history, imageData, req.params.id]); if (result.rows.length === 0) return res.status(404).send('의료진 정보를 찾을 수 없습니다.'); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error('의료진 수정 중 DB 오류:', err); res.status(500).send('서버 오류'); } });
 app.delete('/api/admin/doctors/:id', authenticateToken, async (req, res) => { try { const result = await pool.query('DELETE FROM doctors WHERE id = $1', [req.params.id]); if (result.rowCount === 0) return res.status(404).send('의료진 정보를 찾을 수 없습니다.'); res.status(204).send(); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 
 // 서버 실행
