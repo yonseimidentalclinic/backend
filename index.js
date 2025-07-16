@@ -156,9 +156,27 @@ app.put('/api/admin/about', authenticateToken, async (req, res) => {
 // [핵심 추가] --- 병원 사진 갤러리 API ---
 // GET (Public)
 app.get('/api/clinic-photos', async (req, res) => {
+    const page = parseInt(req.query.page, 10) || 1;
+  const limit = parseInt(req.query.limit, 10) || 8; // 한 페이지에 8장씩
+  const offset = (page - 1) * limit;
+
+
+
+
   try {
-    const result = await pool.query('SELECT * FROM clinic_photos ORDER BY display_order ASC');
-    res.json(toCamelCase(result.rows));
+     const photosPromise = pool.query('SELECT * FROM clinic_photos ORDER BY display_order ASC, id ASC LIMIT $1 OFFSET $2', [limit, offset]);
+    const countPromise = pool.query('SELECT COUNT(*) FROM clinic_photos');
+    
+    const [photosResult, countResult] = await Promise.all([photosPromise, countPromise]);
+    
+    const totalPhotos = parseInt(countResult.rows[0].count, 10);
+    const totalPages = Math.ceil(totalPhotos / limit);
+
+    res.json({
+      photos: toCamelCase(photosResult.rows),
+      totalPages: totalPages,
+      currentPage: page
+    });
   } catch (err) {
     console.error(err);
     res.status(500).send('서버 오류');
