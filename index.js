@@ -46,6 +46,26 @@ async function initializeDatabase() {
     const createRepliesTable = `CREATE TABLE IF NOT EXISTS replies (id SERIAL PRIMARY KEY, consultation_id INTEGER NOT NULL REFERENCES consultations(id) ON DELETE CASCADE, content TEXT NOT NULL, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());`;
     const createDoctorsTable = `CREATE TABLE IF NOT EXISTS doctors (id SERIAL PRIMARY KEY, name VARCHAR(100) NOT NULL, position VARCHAR(100) NOT NULL, history TEXT, image_data TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());`;
     
+    // [핵심 추가] 병원소개 콘텐츠 테이블 생성
+    const createAboutContentTable = `
+      CREATE TABLE IF NOT EXISTS about_content (
+        id INT PRIMARY KEY DEFAULT 1,
+        title TEXT,
+        subtitle TEXT,
+        content TEXT,
+        image_data TEXT,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `;
+    const insertDefaultAboutContent = `
+      INSERT INTO about_content (id, title, subtitle, content)
+      VALUES (1, '연세미치과 이야기', '환자 한 분 한 분의 건강한 미소를 위해, 저희는 보이지 않는 곳까지 정성을 다합니다.', '연세미치과는 단순히 아픈 곳을 치료하는 것을 넘어, 환자분들의 삶의 질을 높이는 것을 목표로 합니다.')
+      ON CONFLICT (id) DO NOTHING;
+    `;
+
+
+
+
     // [핵심 추가] 병원 사진 갤러리 테이블 생성
     const createClinicPhotosTable = `
       CREATE TABLE IF NOT EXISTS clinic_photos (
@@ -62,6 +82,8 @@ async function initializeDatabase() {
     await client.query(createConsultationsTable);
     await client.query(createRepliesTable);
     await client.query(createDoctorsTable);
+    await client.query(createAboutContentTable);
+    await client.query(insertDefaultAboutContent);
     await client.query(createClinicPhotosTable);
     console.log('모든 테이블이 준비되었습니다.');
 
@@ -109,6 +131,27 @@ app.get('/api/doctors', async (req, res) => { try { const result = await pool.qu
 app.post('/api/admin/doctors', authenticateToken, upload.single('image'), async (req, res) => { const { name, position, history } = req.body; const imageData = req.file ? `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}` : null; try { const result = await pool.query('INSERT INTO doctors (name, position, history, image_data) VALUES ($1, $2, $3, $4) RETURNING *', [name, position, history, imageData]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error('의료진 추가 중 DB 오류:', err); res.status(500).send('서버 오류'); } });
 app.put('/api/admin/doctors/:id', authenticateToken, upload.single('image'), async (req, res) => { const { name, position, history, existingImageData } = req.body; const imageData = req.file ? `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}` : existingImageData; try { const result = await pool.query('UPDATE doctors SET name = $1, position = $2, history = $3, image_data = $4, updated_at = NOW() WHERE id = $5 RETURNING *', [name, position, history, imageData, req.params.id]); if (result.rows.length === 0) return res.status(404).send('의료진 정보를 찾을 수 없습니다.'); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error('의료진 수정 중 DB 오류:', err); res.status(500).send('서버 오류'); } });
 app.delete('/api/admin/doctors/:id', authenticateToken, async (req, res) => { try { const result = await pool.query('DELETE FROM doctors WHERE id = $1', [req.params.id]); if (result.rowCount === 0) return res.status(404).send('의료진 정보를 찾을 수 없습니다.'); res.status(204).send(); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
+
+// [핵심 추가] --- 병원소개 (About) API ---
+app.get('/api/about', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM about_content WHERE id = 1');
+    res.json(toCamelCase(result.rows)[0] || {});
+  } catch (err) { console.error(err); res.status(500).send('서버 오류'); }
+});
+app.put('/api/admin/about', authenticateToken, async (req, res) => {
+    const { title, subtitle, content, imageData } = req.body;
+    try {
+        const result = await pool.query(
+            'UPDATE about_content SET title = $1, subtitle = $2, content = $3, image_data = $4, updated_at = NOW() WHERE id = 1 RETURNING *',
+            [title, subtitle, content, imageData]
+        );
+        res.json(toCamelCase(result.rows)[0]);
+    } catch (err) { console.error('병원소개 업데이트 중 DB 오류:', err); res.status(500).send('서버 오류'); }
+});
+
+
+
 
 // [핵심 추가] --- 병원 사진 갤러리 API ---
 // GET (Public)
