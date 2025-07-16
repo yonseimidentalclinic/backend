@@ -104,7 +104,32 @@ app.post('/api/admin/login', (req, res) => { const { password } = req.body; if (
 
 // --- 기존 API 들 (생략 없이 모두 포함) ---
 // 공지사항 API
-app.get('/api/notices', async (req, res) => { try { const result = await pool.query('SELECT * FROM notices ORDER BY created_at DESC'); res.json(toCamelCase(result.rows)); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
+// [핵심 수정] --- 공지사항 (Notices) API ---
+app.get('/api/notices', async (req, res) => {
+  const page = parseInt(req.query.page, 10) || 1;
+  const limit = parseInt(req.query.limit, 10) || 10; // 한 페이지에 10개씩
+  const offset = (page - 1) * limit;
+
+  try {
+    const noticesPromise = pool.query('SELECT * FROM notices ORDER BY created_at DESC LIMIT $1 OFFSET $2', [limit, offset]);
+    const countPromise = pool.query('SELECT COUNT(*) FROM notices');
+    
+    const [noticesResult, countResult] = await Promise.all([noticesPromise, countPromise]);
+    
+    const totalNotices = parseInt(countResult.rows[0].count, 10);
+    const totalPages = Math.ceil(totalNotices / limit);
+
+    res.json({
+      notices: toCamelCase(noticesResult.rows),
+      totalPages: totalPages,
+      currentPage: page
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('서버 오류');
+  }
+});
+
 app.get('/api/notices/:id', async (req, res) => { try { const result = await pool.query('SELECT * FROM notices WHERE id = $1', [req.params.id]); if (result.rows.length === 0) return res.status(404).send('공지사항을 찾을 수 없습니다.'); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 app.post('/api/admin/notices', authenticateToken, async (req, res) => { const { title, content } = req.body; try { const result = await pool.query('INSERT INTO notices (title, content) VALUES ($1, $2) RETURNING *', [title, content]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 app.put('/api/admin/notices/:id', authenticateToken, async (req, res) => { const { title, content } = req.body; try { const result = await pool.query('UPDATE notices SET title = $1, content = $2, updated_at = NOW() WHERE id = $3 RETURNING *', [title, content, req.params.id]); if (result.rows.length === 0) return res.status(404).send('공지사항을 찾을 수 없습니다.'); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
