@@ -77,6 +77,19 @@ async function initializeDatabase() {
       );
     `;
 
+    // [핵심 추가] 자유게시판 댓글 테이블 생성
+    const createPostCommentsTable = `
+      CREATE TABLE IF NOT EXISTS post_comments (
+        id SERIAL PRIMARY KEY,
+        post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+        author VARCHAR(100) NOT NULL,
+        password VARCHAR(255) NOT NULL,
+        content TEXT NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `;
+
+
     await client.query(createNoticesTable);
     await client.query(createPostsTable);
     await client.query(createConsultationsTable);
@@ -85,6 +98,7 @@ async function initializeDatabase() {
     await client.query(createAboutContentTable);
     await client.query(insertDefaultAboutContent);
     await client.query(createClinicPhotosTable);
+    await client.query(createPostCommentsTable);
     console.log('모든 테이블이 준비되었습니다.');
 
   } catch (err) {
@@ -228,7 +242,23 @@ app.get('/api/posts', async (req, res) => {
     res.status(500).send('서버 오류');
   }
 });
-app.get('/api/posts/:id', async (req, res) => { try { const result = await pool.query('SELECT * FROM posts WHERE id = $1', [req.params.id]); if (result.rows.length === 0) return res.status(404).send('게시글을 찾을 수 없습니다.'); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
+app.get('/api/posts/:id', async (req, res) => {
+    try {
+        const postResult = await pool.query('SELECT * FROM posts WHERE id = $1', [req.params.id]);
+        if (postResult.rows.length === 0) return res.status(404).send('게시글을 찾을 수 없습니다.');
+
+        // [핵심 수정] 게시글에 달린 댓글들도 함께 조회
+        const commentsResult = await pool.query('SELECT * FROM post_comments WHERE post_id = $1 ORDER BY created_at ASC', [req.params.id]);
+
+        const post = toCamelCase(postResult.rows)[0];
+        const comments = toCamelCase(commentsResult.rows);
+
+        res.json({ ...post, comments }); // 게시글 정보와 댓글 목록을 함께 반환
+    } catch (err) {
+        console.error(err);
+        res.status(500).send('서버 오류');
+    }
+});
 app.post('/api/posts', async (req, res) => { const { author, password, title, content } = req.body; try { const result = await pool.query('INSERT INTO posts (author, password, title, content) VALUES ($1, $2, $3, $4) RETURNING *', [author, password, title, content]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 app.post('/api/posts/:id/verify', async (req, res) => {
     try {
@@ -271,6 +301,52 @@ app.delete('/api/posts/:id', async (req, res) => {
     } catch (err) { console.error(err); res.status(500).send('서버 오류'); }
 });
 
+// 댓글 작성
+app.post('/api/posts/:id/comments', async (req, res) => {
+    const { author, password, content } = req.body;
+    const postId = req.params.id;
+    try {
+        const hashedPassword = await bcrypt.hash(password, saltRounds);
+        const result = await pool.query(
+            'INSERT INTO post_comments (post_id, author, password, content) VALUES ($1, $2, $3, $4) RETURNING *',
+            [postId, author, hashedPassword, content]
+        );
+        res.status(201).json(toCamelCase(result.rows)[0]);
+    } catch (err) {
+        console.error('댓글 작성 중 오류:', err);
+        res.status(500).send('서버 오류');
+    }
+});
+
+// 사용자 댓글 삭제
+app.delete('/api/posts/comments/:commentId', async (req, res) => {
+    const { password } = req.body;
+    const { commentId } = req.params;
+    try {
+        const result = await pool.query('SELECT password FROM post_comments WHERE id = $1', [commentId]);
+        if (result.rows.length === 0) return res.status(404).send('댓글을 찾을 수 없습니다.');
+
+        const match = await bcrypt.compare(password, result.rows[0].password);
+        if (!match) return res.status(403).send('비밀번호가 올바르지 않습니다.');
+
+        await pool.query('DELETE FROM post_comments WHERE id = $1', [commentId]);
+        res.status(204).send();
+    } catch (err) {
+        console.error('댓글 삭제 중 오류:', err);
+        res.status(500).send('서버 오류');
+    }
+});
+
+// 관리자 댓글 삭제
+app.delete('/api/admin/posts/comments/:commentId', authenticateToken, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM post_comments WHERE id = $1', [req.params.commentId]);
+        res.status(204).send();
+    } catch (err) {
+        console.error('관리자 댓글 삭제 중 오류:', err);
+        res.status(500).send('서버 오류');
+    }
+});
 
 
 app.put('/api/admin/posts/:id', authenticateToken, async (req, res) => { const { title, content } = req.body; try { const result = await pool.query('UPDATE posts SET title = $1, content = $2, updated_at = NOW() WHERE id = $3 RETURNING *', [title, content, req.params.id]); if (result.rows.length === 0) return res.status(404).send('게시글을 찾을 수 없습니다.'); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
