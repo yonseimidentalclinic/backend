@@ -102,6 +102,50 @@ const authenticateToken = (req, res, next) => { const authHeader = req.headers['
 app.all('/', (req, res) => { res.send('연세미치과 백엔드 서버가 정상적으로 작동 중입니다.'); });
 app.post('/api/admin/login', (req, res) => { const { password } = req.body; if (password === process.env.ADMIN_PASSWORD) { const user = { name: 'admin' }; const accessToken = jwt.sign(user, process.env.JWT_SECRET, { expiresIn: '12h' }); res.json({ accessToken }); } else { res.status(401).send('비밀번호가 올바르지 않습니다.'); } });
 
+// [핵심 추가] --- 대시보드 통계 API ---
+app.get('/api/admin/dashboard-stats', authenticateToken, async (req, res) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // 오늘의 시작
+
+    const totalNoticesPromise = pool.query('SELECT COUNT(*) FROM notices');
+    const totalPostsPromise = pool.query('SELECT COUNT(*) FROM posts');
+    const totalConsultationsPromise = pool.query('SELECT COUNT(*) FROM consultations');
+    const unansweredConsultationsPromise = pool.query('SELECT COUNT(*) FROM consultations WHERE is_answered = false');
+    const todayConsultationsPromise = pool.query('SELECT COUNT(*) FROM consultations WHERE created_at >= $1', [today]);
+
+    const [
+      totalNoticesResult,
+      totalPostsResult,
+      totalConsultationsResult,
+      unansweredConsultationsResult,
+      todayConsultationsResult
+    ] = await Promise.all([
+      totalNoticesPromise,
+      totalPostsPromise,
+      totalConsultationsPromise,
+      unansweredConsultationsPromise,
+      todayConsultationsPromise
+    ]);
+
+    res.json({
+      totalNotices: parseInt(totalNoticesResult.rows[0].count, 10),
+      totalPosts: parseInt(totalPostsResult.rows[0].count, 10),
+      totalConsultations: parseInt(totalConsultationsResult.rows[0].count, 10),
+      unansweredConsultations: parseInt(unansweredConsultationsResult.rows[0].count, 10),
+      todayConsultations: parseInt(todayConsultationsResult.rows[0].count, 10),
+    });
+
+  } catch (err) {
+    console.error('대시보드 통계 조회 오류:', err);
+    res.status(500).send('서버 오류');
+  }
+});
+
+
+
+
+
 // --- 기존 API 들 (생략 없이 모두 포함) ---
 // 공지사항 API
 // [핵심 수정] --- 공지사항 (Notices) API ---
