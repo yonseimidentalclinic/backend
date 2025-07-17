@@ -85,9 +85,15 @@ async function initializeDatabase() {
         author VARCHAR(100) NOT NULL,
         password VARCHAR(255) NOT NULL,
         content TEXT NOT NULL,
+        likes INTEGER DEFAULT 0,
+        tags TEXT,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
     `;
+
+    // ALTER TABLE을 사용하여 기존 테이블에 컬럼이 없으면 추가
+    const alterCommentsTableLikes = `ALTER TABLE post_comments ADD COLUMN IF NOT EXISTS likes INTEGER DEFAULT 0;`;
+    const alterCommentsTableTags = `ALTER TABLE post_comments ADD COLUMN IF NOT EXISTS tags TEXT;`;
 
 
     await client.query(createNoticesTable);
@@ -99,6 +105,8 @@ async function initializeDatabase() {
     await client.query(insertDefaultAboutContent);
     await client.query(createClinicPhotosTable);
     await client.query(createPostCommentsTable);
+    await client.query(alterCommentsTableLikes);
+    await client.query(alterCommentsTableTags);
     console.log('모든 테이블이 준비되었습니다.');
 
   } catch (err) {
@@ -272,6 +280,64 @@ app.post('/api/posts/:id/verify', async (req, res) => {
         }
     } catch (err) { console.error(err); res.status(500).json({ success: false, message: '서버 오류' }); }
 });
+
+// [핵심 추가] 댓글 좋아요 API
+app.post('/api/posts/comments/:commentId/like', async (req, res) => {
+    const { commentId } = req.params;
+    try {
+        const result = await pool.query(
+            'UPDATE post_comments SET likes = likes + 1 WHERE id = $1 RETURNING likes',
+            [commentId]
+        );
+        if (result.rows.length === 0) return res.status(404).send('댓글을 찾을 수 없습니다.');
+        res.status(200).json(result.rows[0]);
+    } catch (err) { console.error('좋아요 처리 중 오류:', err); res.status(500).send('서버 오류'); }
+});
+
+// [핵심 추가] 댓글 태그 추가 API
+app.post('/api/posts/comments/:commentId/tags', async (req, res) => {
+    const { tag } = req.body;
+    const { commentId } = req.params;
+    if (!tag || !tag.trim()) return res.status(400).send('태그 내용이 없습니다.');
+    try {
+        // 기존 태그를 불러와서 새 태그를 추가 (중복 방지)
+        const currentTagsResult = await pool.query('SELECT tags FROM post_comments WHERE id = $1', [commentId]);
+        if (currentTagsResult.rows.length === 0) return res.status(404).send('댓글을 찾을 수 없습니다.');
+        
+        const currentTags = currentTagsResult.rows[0].tags ? currentTagsResult.rows[0].tags.split(',') : [];
+        if (!currentTags.includes(tag.trim())) {
+            currentTags.push(tag.trim());
+        }
+        
+        const newTags = currentTags.join(',');
+        const result = await pool.query(
+            'UPDATE post_comments SET tags = $1 WHERE id = $2 RETURNING tags',
+            [newTags, commentId]
+        );
+        res.status(200).json(result.rows[0]);
+    } catch (err) { console.error('태그 추가 중 오류:', err); res.status(500).send('서버 오류'); }
+});
+
+app.delete('/api/posts/comments/:commentId', async (req, res) => {
+    const { password } = req.body;
+    const { commentId } = req.params;
+    try {
+        const result = await pool.query('SELECT password FROM post_comments WHERE id = $1', [commentId]);
+        if (result.rows.length === 0) return res.status(404).send('댓글을 찾을 수 없습니다.');
+        const match = await bcrypt.compare(password, result.rows[0].password);
+        if (!match) return res.status(403).send('비밀번호가 올바르지 않습니다.');
+        await pool.query('DELETE FROM post_comments WHERE id = $1', [commentId]);
+        res.status(204).send();
+    } catch (err) { console.error('댓글 삭제 중 오류:', err); res.status(500).send('서버 오류'); }
+});
+
+app.delete('/api/admin/posts/comments/:commentId', authenticateToken, async (req, res) => {
+    try {
+        await pool.query('DELETE FROM post_comments WHERE id = $1', [req.params.commentId]);
+        res.status(204).send();
+    } catch (err) { console.error('관리자 댓글 삭제 중 오류:', err); res.status(500).send('서버 오류'); }
+});
+
 
 // [핵심 추가] 사용자 게시글 수정
 app.put('/api/posts/:id', async (req, res) => {
