@@ -109,23 +109,36 @@ app.get('/api/notices', async (req, res) => {
   const page = parseInt(req.query.page, 10) || 1;
   const limit = parseInt(req.query.limit, 10) || 10; // 한 페이지에 10개씩
   const offset = (page - 1) * limit;
+  const searchTerm = req.query.search || '';
+
 
   try {
-    const noticesPromise = pool.query('SELECT * FROM notices ORDER BY created_at DESC LIMIT $1 OFFSET $2', [limit, offset]);
-    const countPromise = pool.query('SELECT COUNT(*) FROM notices');
-    
-    const [noticesResult, countResult] = await Promise.all([noticesPromise, countPromise]);
-    
-    const totalNotices = parseInt(countResult.rows[0].count, 10);
-    const totalPages = Math.ceil(totalNotices / limit);
+    let baseQuery = 'FROM notices';
+    let whereClause = '';
+    const queryParams = [];
+
+    if (searchTerm) {
+      whereClause = 'WHERE title ILIKE $1 OR content ILIKE $1';
+      queryParams.push(`%${searchTerm}%`);
+    }
+
+    const countQuery = `SELECT COUNT(*) ${baseQuery} ${whereClause}`;
+    const countResult = await pool.query(countQuery, queryParams);
+    const totalItems = parseInt(countResult.rows[0].count, 10);
+    const totalPages = Math.ceil(totalItems / limit);
+
+    const itemsQuery = `SELECT * ${baseQuery} ${whereClause} ORDER BY created_at DESC LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
+    queryParams.push(limit, offset);
+    const itemsResult = await pool.query(itemsQuery, queryParams);
 
     res.json({
-      notices: toCamelCase(noticesResult.rows),
-      totalPages: totalPages,
-      currentPage: page
+      items: toCamelCase(itemsResult.rows),
+      totalPages,
+      currentPage: page,
+      totalItems,
     });
   } catch (err) {
-    console.error(err);
+    console.error('공지사항 목록 조회 오류:',err);
     res.status(500).send('서버 오류');
   }
 });
@@ -140,14 +153,36 @@ app.get('/api/posts', async (req, res) => {
   const page = parseInt(req.query.page, 10) || 1;
   const limit = parseInt(req.query.limit, 10) || 10;
   const offset = (page - 1) * limit;
+  const searchTerm = req.query.search || '';
   try {
-    const postsPromise = pool.query('SELECT id, title, author, created_at, updated_at FROM posts ORDER BY created_at DESC LIMIT $1 OFFSET $2', [limit, offset]);
-    const countPromise = pool.query('SELECT COUNT(*) FROM posts');
-    const [postsResult, countResult] = await Promise.all([postsPromise, countPromise]);
+    let baseQuery = 'FROM posts';
+    let whereClause = '';
+    const queryParams = [];
+
+    if (searchTerm) {
+      whereClause = 'WHERE title ILIKE $1 OR content ILIKE $1 OR author ILIKE $1';
+      queryParams.push(`%${searchTerm}%`);
+    }
+
+    const countQuery = `SELECT COUNT(*) ${baseQuery} ${whereClause}`;
+    const countResult = await pool.query(countQuery, queryParams);
     const totalItems = parseInt(countResult.rows[0].count, 10);
     const totalPages = Math.ceil(totalItems / limit);
-    res.json({ items: toCamelCase(postsResult.rows), totalPages, currentPage: page, totalItems });
-  } catch (err) { console.error(err); res.status(500).send('서버 오류'); }
+
+    const itemsQuery = `SELECT id, title, author, created_at, updated_at ${baseQuery} ${whereClause} ORDER BY created_at DESC LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
+    queryParams.push(limit, offset);
+    const itemsResult = await pool.query(itemsQuery, queryParams);
+
+    res.json({
+      items: toCamelCase(itemsResult.rows),
+      totalPages,
+      currentPage: page,
+      totalItems,
+    });
+  } catch (err) {
+    console.error('자유게시판 목록 조회 오류:', err);
+    res.status(500).send('서버 오류');
+  }
 });
 app.get('/api/posts/:id', async (req, res) => { try { const result = await pool.query('SELECT * FROM posts WHERE id = $1', [req.params.id]); if (result.rows.length === 0) return res.status(404).send('게시글을 찾을 수 없습니다.'); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 app.post('/api/posts', async (req, res) => { const { author, password, title, content } = req.body; try { const result = await pool.query('INSERT INTO posts (author, password, title, content) VALUES ($1, $2, $3, $4) RETURNING *', [author, password, title, content]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
@@ -159,14 +194,36 @@ app.get('/api/consultations', async (req, res) => {
   const page = parseInt(req.query.page, 10) || 1;
   const limit = parseInt(req.query.limit, 10) || 10;
   const offset = (page - 1) * limit;
+  const searchTerm = req.query.search || '';
   try {
-    const consultationsPromise = pool.query('SELECT id, title, author, created_at, is_secret, is_answered FROM consultations ORDER BY created_at DESC LIMIT $1 OFFSET $2', [limit, offset]);
-    const countPromise = pool.query('SELECT COUNT(*) FROM consultations');
-    const [consultationsResult, countResult] = await Promise.all([consultationsPromise, countPromise]);
+    let baseQuery = 'FROM consultations';
+    let whereClause = 'WHERE is_secret = false'; // 비밀글이 아닌 것만 검색 대상
+    const queryParams = [];
+
+    if (searchTerm) {
+      whereClause += ' AND (title ILIKE $1 OR content ILIKE $1 OR author ILIKE $1)';
+      queryParams.push(`%${searchTerm}%`);
+    }
+
+    const countQuery = `SELECT COUNT(*) ${baseQuery} ${whereClause}`;
+    const countResult = await pool.query(countQuery, queryParams);
     const totalItems = parseInt(countResult.rows[0].count, 10);
     const totalPages = Math.ceil(totalItems / limit);
-    res.json({ items: toCamelCase(consultationsResult.rows), totalPages, currentPage: page, totalItems });
-  } catch (err) { console.error(err); res.status(500).send('서버 오류'); }
+
+    const itemsQuery = `SELECT id, title, author, created_at, is_secret, is_answered ${baseQuery} ${whereClause} ORDER BY created_at DESC LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
+    queryParams.push(limit, offset);
+    const itemsResult = await pool.query(itemsQuery, queryParams);
+
+    res.json({
+      items: toCamelCase(itemsResult.rows),
+      totalPages,
+      currentPage: page,
+      totalItems,
+    });
+  } catch (err) {
+    console.error('온라인상담 목록 조회 오류:', err);
+    res.status(500).send('서버 오류');
+  }
 });
 app.get('/api/consultations/:id', async (req, res) => { try { const consultationResult = await pool.query('SELECT * FROM consultations WHERE id = $1', [req.params.id]); if (consultationResult.rows.length === 0) return res.status(404).send('상담글을 찾을 수 없습니다.'); const replyResult = await pool.query('SELECT * FROM replies WHERE consultation_id = $1 ORDER BY created_at DESC', [req.params.id]); const consultation = toCamelCase(consultationResult.rows)[0]; const replies = toCamelCase(replyResult.rows); res.json({ ...consultation, replies }); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 app.post('/api/consultations', async (req, res) => { const { author, password, title, content, isSecret } = req.body; try { const result = await pool.query('INSERT INTO consultations (author, password, title, content, is_secret) VALUES ($1, $2, $3, $4, $5) RETURNING *', [author, password, title, content, isSecret]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
