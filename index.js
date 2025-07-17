@@ -96,6 +96,23 @@ async function initializeDatabase() {
     // ALTER TABLE을 사용하여 기존 테이블에 컬럼이 없으면 추가
     const alterCommentsTableLikes = `ALTER TABLE post_comments ADD COLUMN IF NOT EXISTS likes INTEGER DEFAULT 0;`;
     const alterCommentsTableTags = `ALTER TABLE post_comments ADD COLUMN IF NOT EXISTS tags TEXT;`;
+    
+    // [핵심 추가] 예약 정보 테이블 생성
+    const createReservationsTable = `
+      CREATE TABLE IF NOT EXISTS reservations (
+        id SERIAL PRIMARY KEY,
+        patient_name VARCHAR(100) NOT NULL,
+        phone_number VARCHAR(100) NOT NULL,
+        desired_date DATE NOT NULL,
+        desired_time VARCHAR(50) NOT NULL,
+        notes TEXT,
+        status VARCHAR(50) DEFAULT 'pending', -- pending, confirmed, completed, cancelled
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `;
+
+     
+
 
 
     await client.query(createNoticesTable);
@@ -109,6 +126,7 @@ async function initializeDatabase() {
     await client.query(createPostCommentsTable);
     await client.query(alterCommentsTableLikes);
     await client.query(alterCommentsTableTags);
+    await client.query(createReservationsTable);
     console.log('모든 테이블이 준비되었습니다.');
 
   } catch (err) {
@@ -562,6 +580,68 @@ app.delete('/api/admin/clinic-photos/:id', authenticateToken, async (req, res) =
         res.status(500).send('서버 오류');
     }
 });
+
+/ [핵심 추가] --- 온라인 예약 (Reservations) API ---
+// 예약 신청 (Public)
+app.post('/api/reservations', async (req, res) => {
+    const { patientName, phoneNumber, desiredDate, desiredTime, notes } = req.body;
+    try {
+        const result = await pool.query(
+            'INSERT INTO reservations (patient_name, phone_number, desired_date, desired_time, notes) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+            [patientName, phoneNumber, desiredDate, desiredTime, notes]
+        );
+        res.status(201).json(toCamelCase(result.rows)[0]);
+    } catch (err) {
+        console.error('예약 신청 중 오류:', err);
+        res.status(500).send('서버 오류');
+    }
+});
+
+
+// 예약 목록 조회 (Admin)
+app.get('/api/admin/reservations', authenticateToken, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM reservations ORDER BY desired_date DESC, created_at DESC');
+        res.json(toCamelCase(result.rows));
+    } catch (err) {
+        console.error('예약 목록 조회 오류:', err);
+        res.status(500).send('서버 오류');
+    }
+});
+
+
+// 예약 상태 변경 (Admin)
+app.put('/api/admin/reservations/:id/status', authenticateToken, async (req, res) => {
+    const { status } = req.body;
+    try {
+        const result = await pool.query(
+            'UPDATE reservations SET status = $1 WHERE id = $2 RETURNING *',
+            [status, req.params.id]
+        );
+        if (result.rows.length === 0) return res.status(404).send('예약 정보를 찾을 수 없습니다.');
+        res.json(toCamelCase(result.rows)[0]);
+    } catch (err) {
+        console.error('예약 상태 변경 오류:', err);
+        res.status(500).send('서버 오류');
+    }
+});
+
+// 예약 삭제 (Admin)
+app.delete('/api/admin/reservations/:id', authenticateToken, async (req, res) => {
+    try {
+        const result = await pool.query('DELETE FROM reservations WHERE id = $1', [req.params.id]);
+        if (result.rowCount === 0) return res.status(404).send('예약 정보를 찾을 수 없습니다.');
+        res.status(204).send();
+    } catch (err) {
+        console.error('예약 삭제 오류:', err);
+        res.status(500).send('서버 오류');
+    }
+});
+
+
+
+
+
 
 
 // 서버 실행
