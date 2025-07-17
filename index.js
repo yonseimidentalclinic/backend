@@ -15,11 +15,13 @@ const cors = require('cors');
 const { Pool } = require('pg');
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
+const bcrypt = require('bcrypt'); // [핵심 수정] 암호화 라이브러리 정상적으로 import
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+const saltRounds = 10; // [핵심 수정] bcrypt의 saltRounds 설정
 
 const storage = multer.memoryStorage();
 const upload = multer({ 
@@ -250,34 +252,23 @@ app.get('/api/posts', async (req, res) => {
     res.status(500).send('서버 오류');
   }
 });
-app.get('/api/posts/:id', async (req, res) => {
+// --- 자유게시판 (Posts) API ---
+app.get('/api/posts/:id', async (req, res) => { try { const postResult = await pool.query('SELECT * FROM posts WHERE id = $1', [req.params.id]); if (postResult.rows.length === 0) return res.status(404).send('게시글을 찾을 수 없습니다.'); const commentsResult = await pool.query('SELECT * FROM post_comments WHERE post_id = $1 ORDER BY created_at ASC', [req.params.id]); const post = toCamelCase(postResult.rows)[0]; const comments = toCamelCase(commentsResult.rows); res.json({ ...post, comments }); } catch (err) { console.error(err); res.status(500).send('서버 오류'); }});
+app.post('/api/posts', async (req, res) => {
+    const { author, password, title, content } = req.body;
     try {
-        const postResult = await pool.query('SELECT * FROM posts WHERE id = $1', [req.params.id]);
-        if (postResult.rows.length === 0) return res.status(404).send('게시글을 찾을 수 없습니다.');
-
-        // [핵심 수정] 게시글에 달린 댓글들도 함께 조회
-        const commentsResult = await pool.query('SELECT * FROM post_comments WHERE post_id = $1 ORDER BY created_at ASC', [req.params.id]);
-
-        const post = toCamelCase(postResult.rows)[0];
-        const comments = toCamelCase(commentsResult.rows);
-
-        res.json({ ...post, comments }); // 게시글 정보와 댓글 목록을 함께 반환
-    } catch (err) {
-        console.error(err);
-        res.status(500).send('서버 오류');
-    }
+        const hashedPassword = await bcrypt.hash(password, saltRounds);
+        const result = await pool.query('INSERT INTO posts (author, password, title, content) VALUES ($1, $2, $3, $4) RETURNING *', [author, hashedPassword, title, content]);
+        res.status(201).json(toCamelCase(result.rows)[0]);
+    } catch (err) { console.error(err); res.status(500).send('서버 오류'); }
 });
-app.post('/api/posts', async (req, res) => { const { author, password, title, content } = req.body; try { const result = await pool.query('INSERT INTO posts (author, password, title, content) VALUES ($1, $2, $3, $4) RETURNING *', [author, password, title, content]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 app.post('/api/posts/:id/verify', async (req, res) => {
     try {
         const { password } = req.body;
         const result = await pool.query('SELECT password FROM posts WHERE id = $1', [req.params.id]);
         if (result.rows.length === 0) return res.status(404).json({ success: false, message: '게시글을 찾을 수 없습니다.' });
-        if (result.rows[0].password === password) {
-            res.json({ success: true });
-        } else {
-            res.json({ success: false, message: '비밀번호가 일치하지 않습니다.' });
-        }
+        const match = await bcrypt.compare(password, result.rows[0].password);
+        res.json({ success: match });
     } catch (err) { console.error(err); res.status(500).json({ success: false, message: '서버 오류' }); }
 });
 
@@ -339,18 +330,14 @@ app.delete('/api/admin/posts/comments/:commentId', authenticateToken, async (req
 });
 
 
-// [핵심 추가] 사용자 게시글 수정
 app.put('/api/posts/:id', async (req, res) => {
     const { title, content, password } = req.body;
     try {
         const verifyResult = await pool.query('SELECT password FROM posts WHERE id = $1', [req.params.id]);
         if (verifyResult.rows.length === 0) return res.status(404).send('게시글을 찾을 수 없습니다.');
-        if (verifyResult.rows[0].password !== password) return res.status(403).send('비밀번호가 올바르지 않습니다.');
-
-        const result = await pool.query(
-            'UPDATE posts SET title = $1, content = $2, updated_at = NOW() WHERE id = $3 RETURNING *',
-            [title, content, req.params.id]
-        );
+        const match = await bcrypt.compare(password, verifyResult.rows[0].password);
+        if (!match) return res.status(403).send('비밀번호가 올바르지 않습니다.');
+        const result = await pool.query('UPDATE posts SET title = $1, content = $2, updated_at = NOW() WHERE id = $3 RETURNING *', [title, content, req.params.id]);
         res.json(toCamelCase(result.rows)[0]);
     } catch (err) { console.error(err); res.status(500).send('서버 오류'); }
 });
@@ -360,48 +347,24 @@ app.delete('/api/posts/:id', async (req, res) => {
     try {
         const verifyResult = await pool.query('SELECT password FROM posts WHERE id = $1', [req.params.id]);
         if (verifyResult.rows.length === 0) return res.status(404).send('게시글을 찾을 수 없습니다.');
-        if (verifyResult.rows[0].password !== password) return res.status(403).send('비밀번호가 올바르지 않습니다.');
-
+        const match = await bcrypt.compare(password, verifyResult.rows[0].password);
+        if (!match) return res.status(403).send('비밀번호가 올바르지 않습니다.');
         await pool.query('DELETE FROM posts WHERE id = $1', [req.params.id]);
         res.status(204).send();
     } catch (err) { console.error(err); res.status(500).send('서버 오류'); }
 });
-
 // 댓글 작성
 app.post('/api/posts/:id/comments', async (req, res) => {
     const { author, password, content } = req.body;
     const postId = req.params.id;
     try {
         const hashedPassword = await bcrypt.hash(password, saltRounds);
-        const result = await pool.query(
-            'INSERT INTO post_comments (post_id, author, password, content) VALUES ($1, $2, $3, $4) RETURNING *',
-            [postId, author, hashedPassword, content]
-        );
+        const result = await pool.query('INSERT INTO post_comments (post_id, author, password, content) VALUES ($1, $2, $3, $4) RETURNING *', [postId, author, hashedPassword, content]);
         res.status(201).json(toCamelCase(result.rows)[0]);
-    } catch (err) {
-        console.error('댓글 작성 중 오류:', err);
-        res.status(500).send('서버 오류');
-    }
+    } catch (err) { console.error('댓글 작성 중 오류:', err); res.status(500).send('서버 오류'); }
 });
 
 // 사용자 댓글 삭제
-app.delete('/api/posts/comments/:commentId', async (req, res) => {
-    const { password } = req.body;
-    const { commentId } = req.params;
-    try {
-        const result = await pool.query('SELECT password FROM post_comments WHERE id = $1', [commentId]);
-        if (result.rows.length === 0) return res.status(404).send('댓글을 찾을 수 없습니다.');
-
-        const match = await bcrypt.compare(password, result.rows[0].password);
-        if (!match) return res.status(403).send('비밀번호가 올바르지 않습니다.');
-
-        await pool.query('DELETE FROM post_comments WHERE id = $1', [commentId]);
-        res.status(204).send();
-    } catch (err) {
-        console.error('댓글 삭제 중 오류:', err);
-        res.status(500).send('서버 오류');
-    }
-});
 
 // 관리자 댓글 삭제
 app.delete('/api/admin/posts/comments/:commentId', authenticateToken, async (req, res) => {
@@ -413,7 +376,18 @@ app.delete('/api/admin/posts/comments/:commentId', authenticateToken, async (req
         res.status(500).send('서버 오류');
     }
 });
-
+app.delete('/api/posts/comments/:commentId', async (req, res) => {
+    const { password } = req.body;
+    const { commentId } = req.params;
+    try {
+        const result = await pool.query('SELECT password FROM post_comments WHERE id = $1', [commentId]);
+        if (result.rows.length === 0) return res.status(404).send('댓글을 찾을 수 없습니다.');
+        const match = await bcrypt.compare(password, result.rows[0].password);
+        if (!match) return res.status(403).send('비밀번호가 올바르지 않습니다.');
+        await pool.query('DELETE FROM post_comments WHERE id = $1', [commentId]);
+        res.status(204).send();
+    } catch (err) { console.error('댓글 삭제 중 오류:', err); res.status(500).send('서버 오류'); }
+});
 
 app.put('/api/admin/posts/:id', authenticateToken, async (req, res) => { const { title, content } = req.body; try { const result = await pool.query('UPDATE posts SET title = $1, content = $2, updated_at = NOW() WHERE id = $3 RETURNING *', [title, content, req.params.id]); if (result.rows.length === 0) return res.status(404).send('게시글을 찾을 수 없습니다.'); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 app.delete('/api/admin/posts/:id', authenticateToken, async (req, res) => { try { const result = await pool.query('DELETE FROM posts WHERE id = $1', [req.params.id]); if (result.rowCount === 0) return res.status(404).send('게시글을 찾을 수 없습니다.'); res.status(204).send(); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
@@ -428,7 +402,7 @@ app.get('/api/consultations', async (req, res) => {
     let baseQuery = 'FROM consultations';
     let whereClause = 'WHERE is_secret = false'; // 비밀글이 아닌 것만 검색 대상
     const queryParams = [];
-
+app
     if (searchTerm) {
       whereClause += ' AND (title ILIKE $1 OR content ILIKE $1 OR author ILIKE $1)';
       queryParams.push(`%${searchTerm}%`);
@@ -455,10 +429,45 @@ app.get('/api/consultations', async (req, res) => {
   }
 });
 app.get('/api/consultations/:id', async (req, res) => { try { const consultationResult = await pool.query('SELECT * FROM consultations WHERE id = $1', [req.params.id]); if (consultationResult.rows.length === 0) return res.status(404).send('상담글을 찾을 수 없습니다.'); const replyResult = await pool.query('SELECT * FROM replies WHERE consultation_id = $1 ORDER BY created_at DESC', [req.params.id]); const consultation = toCamelCase(consultationResult.rows)[0]; const replies = toCamelCase(replyResult.rows); res.json({ ...consultation, replies }); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
-app.post('/api/consultations', async (req, res) => { const { author, password, title, content, isSecret } = req.body; try { const result = await pool.query('INSERT INTO consultations (author, password, title, content, is_secret) VALUES ($1, $2, $3, $4, $5) RETURNING *', [author, password, title, content, isSecret]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
-app.post('/api/consultations/:id/verify', async (req, res) => { try { const { password } = req.body; const result = await pool.query('SELECT password FROM consultations WHERE id = $1', [req.params.id]); if (result.rows.length === 0) return res.status(404).json({ success: false, message: '상담글을 찾을 수 없습니다.' }); if (result.rows[0].password === password) { res.json({ success: true }); } else { res.json({ success: false, message: '비밀번호가 일치하지 않습니다.' }); } } catch (err) { console.error(err); res.status(500).json({ success: false, message: '서버 오류' }); }});
-app.put('/api/consultations/:id', async (req, res) => { const { title, content, password } = req.body; try { const verifyResult = await pool.query('SELECT password FROM consultations WHERE id = $1', [req.params.id]); if (verifyResult.rows.length === 0) return res.status(404).send('상담글을 찾을 수 없습니다.'); if (verifyResult.rows[0].password !== password) return res.status(403).send('비밀번호가 올바르지 않습니다.'); const result = await pool.query('UPDATE consultations SET title = $1, content = $2, updated_at = NOW() WHERE id = $3 RETURNING *', [title, content, req.params.id]); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); }});
-app.delete('/api/consultations/:id', async (req, res) => { const { password } = req.body; try { const verifyResult = await pool.query('SELECT password FROM consultations WHERE id = $1', [req.params.id]); if (verifyResult.rows.length === 0) return res.status(404).send('상담글을 찾을 수 없습니다.'); if (verifyResult.rows[0].password !== password) return res.status(403).send('비밀번호가 올바르지 않습니다.'); await pool.query('DELETE FROM consultations WHERE id = $1', [req.params.id]); res.status(204).send(); } catch (err) { console.error(err); res.status(500).send('서버 오류'); }});
+app.post('/api/consultations', async (req, res) => {
+    const { author, password, title, content, isSecret } = req.body;
+    try {
+        const hashedPassword = await bcrypt.hash(password, saltRounds);
+        const result = await pool.query('INSERT INTO consultations (author, password, title, content, is_secret) VALUES ($1, $2, $3, $4, $5) RETURNING *', [author, hashedPassword, title, content, isSecret]);
+        res.status(201).json(toCamelCase(result.rows)[0]);
+    } catch (err) { console.error(err); res.status(500).send('서버 오류'); }
+});
+app.post('/api/consultations/:id/verify', async (req, res) => {
+    try {
+        const { password } = req.body;
+        const result = await pool.query('SELECT password FROM consultations WHERE id = $1', [req.params.id]);
+        if (result.rows.length === 0) return res.status(404).json({ success: false, message: '상담글을 찾을 수 없습니다.' });
+        const match = await bcrypt.compare(password, result.rows[0].password);
+        res.json({ success: match });
+    } catch (err) { console.error(err); res.status(500).json({ success: false, message: '서버 오류' }); }
+});
+app.put('/api/consultations/:id', async (req, res) => {
+    const { title, content, password } = req.body;
+    try {
+        const verifyResult = await pool.query('SELECT password FROM consultations WHERE id = $1', [req.params.id]);
+        if (verifyResult.rows.length === 0) return res.status(404).send('상담글을 찾을 수 없습니다.');
+        const match = await bcrypt.compare(password, verifyResult.rows[0].password);
+        if (!match) return res.status(403).send('비밀번호가 올바르지 않습니다.');
+        const result = await pool.query('UPDATE consultations SET title = $1, content = $2, updated_at = NOW() WHERE id = $3 RETURNING *', [title, content, req.params.id]);
+        res.json(toCamelCase(result.rows)[0]);
+    } catch (err) { console.error(err); res.status(500).send('서버 오류'); }
+});
+app.delete('/api/consultations/:id', async (req, res) => {
+    const { password } = req.body;
+    try {
+        const verifyResult = await pool.query('SELECT password FROM consultations WHERE id = $1', [req.params.id]);
+        if (verifyResult.rows.length === 0) return res.status(404).send('상담글을 찾을 수 없습니다.');
+        const match = await bcrypt.compare(password, verifyResult.rows[0].password);
+        if (!match) return res.status(403).send('비밀번호가 올바르지 않습니다.');
+        await pool.query('DELETE FROM consultations WHERE id = $1', [req.params.id]);
+        res.status(204).send();
+    } catch (err) { console.error(err); res.status(500).send('서버 오류'); }
+});
 app.put('/api/admin/consultations/:id', authenticateToken, async (req, res) => { const { title, content } = req.body; try { const result = await pool.query('UPDATE consultations SET title = $1, content = $2, updated_at = NOW() WHERE id = $3 RETURNING *', [title, content, req.params.id]); if (result.rows.length === 0) return res.status(404).send('상담글을 찾을 수 없습니다.'); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 app.delete('/api/admin/consultations/:id', authenticateToken, async (req, res) => { try { const result = await pool.query('DELETE FROM consultations WHERE id = $1', [req.params.id]); if (result.rowCount === 0) return res.status(404).send('상담글을 찾을 수 없습니다.'); res.status(204).send(); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 
