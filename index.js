@@ -581,7 +581,7 @@ app.delete('/api/admin/clinic-photos/:id', authenticateToken, async (req, res) =
     }
 });
 
-/ [핵심 추가] --- 온라인 예약 (Reservations) API ---
+// [핵심 추가] --- 온라인 예약 (Reservations) API ---
 // 예약 신청 (Public)
 app.post('/api/reservations', async (req, res) => {
     const { patientName, phoneNumber, desiredDate, desiredTime, notes } = req.body;
