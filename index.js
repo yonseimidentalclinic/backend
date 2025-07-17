@@ -144,6 +144,37 @@ const authenticateToken = (req, res, next) => { const authHeader = req.headers['
 app.all('/', (req, res) => { res.send('연세미치과 백엔드 서버가 정상적으로 작동 중입니다.'); });
 app.post('/api/admin/login', (req, res) => { const { password } = req.body; if (password === process.env.ADMIN_PASSWORD) { const user = { name: 'admin' }; const accessToken = jwt.sign(user, process.env.JWT_SECRET, { expiresIn: '12h' }); res.json({ accessToken }); } else { res.status(401).send('비밀번호가 올바르지 않습니다.'); } });
 
+// --- 대시보드 API ---
+app.get('/api/admin/dashboard-summary', authenticateToken, async (req, res) => {
+  try {
+    const unansweredQuery = 'SELECT COUNT(*) FROM consultations WHERE is_answered = false';
+    const todayQuery = "SELECT COUNT(*) FROM consultations WHERE created_at >= CURRENT_DATE";
+    const postsQuery = 'SELECT COUNT(*) FROM posts';
+    const noticesQuery = 'SELECT COUNT(*) FROM notices';
+    const consultationsQuery = 'SELECT COUNT(*) FROM consultations';
+
+    const [unanswered, today, posts, notices, consultations] = await Promise.all([
+      pool.query(unansweredQuery),
+      pool.query(todayQuery),
+      pool.query(postsQuery),
+      pool.query(noticesQuery),
+      pool.query(consultationsQuery)
+    ]);
+
+    res.json({
+      unansweredConsultations: parseInt(unanswered.rows[0].count, 10),
+      todayConsultations: parseInt(today.rows[0].count, 10),
+      totalPosts: parseInt(posts.rows[0].count, 10),
+      totalNotices: parseInt(notices.rows[0].count, 10),
+      totalConsultations: parseInt(consultations.rows[0].count, 10),
+    });
+  } catch (err) {
+    console.error('대시보드 요약 정보 조회 오류:', err);
+    res.status(500).send('서버 오류');
+  }
+});
+
+
 // [핵심 추가] --- 대시보드 통계 API ---
 app.get('/api/admin/dashboard-stats', authenticateToken, async (req, res) => {
   try {
