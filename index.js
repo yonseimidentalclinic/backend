@@ -186,6 +186,49 @@ app.get('/api/posts', async (req, res) => {
 });
 app.get('/api/posts/:id', async (req, res) => { try { const result = await pool.query('SELECT * FROM posts WHERE id = $1', [req.params.id]); if (result.rows.length === 0) return res.status(404).send('게시글을 찾을 수 없습니다.'); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 app.post('/api/posts', async (req, res) => { const { author, password, title, content } = req.body; try { const result = await pool.query('INSERT INTO posts (author, password, title, content) VALUES ($1, $2, $3, $4) RETURNING *', [author, password, title, content]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
+app.post('/api/posts/:id/verify', async (req, res) => {
+    try {
+        const { password } = req.body;
+        const result = await pool.query('SELECT password FROM posts WHERE id = $1', [req.params.id]);
+        if (result.rows.length === 0) return res.status(404).json({ success: false, message: '게시글을 찾을 수 없습니다.' });
+        if (result.rows[0].password === password) {
+            res.json({ success: true });
+        } else {
+            res.json({ success: false, message: '비밀번호가 일치하지 않습니다.' });
+        }
+    } catch (err) { console.error(err); res.status(500).json({ success: false, message: '서버 오류' }); }
+});
+
+// [핵심 추가] 사용자 게시글 수정
+app.put('/api/posts/:id', async (req, res) => {
+    const { title, content, password } = req.body;
+    try {
+        const verifyResult = await pool.query('SELECT password FROM posts WHERE id = $1', [req.params.id]);
+        if (verifyResult.rows.length === 0) return res.status(404).send('게시글을 찾을 수 없습니다.');
+        if (verifyResult.rows[0].password !== password) return res.status(403).send('비밀번호가 올바르지 않습니다.');
+
+        const result = await pool.query(
+            'UPDATE posts SET title = $1, content = $2, updated_at = NOW() WHERE id = $3 RETURNING *',
+            [title, content, req.params.id]
+        );
+        res.json(toCamelCase(result.rows)[0]);
+    } catch (err) { console.error(err); res.status(500).send('서버 오류'); }
+});
+// [핵심 추가] 사용자 게시글 삭제
+app.delete('/api/posts/:id', async (req, res) => {
+    const { password } = req.body;
+    try {
+        const verifyResult = await pool.query('SELECT password FROM posts WHERE id = $1', [req.params.id]);
+        if (verifyResult.rows.length === 0) return res.status(404).send('게시글을 찾을 수 없습니다.');
+        if (verifyResult.rows[0].password !== password) return res.status(403).send('비밀번호가 올바르지 않습니다.');
+
+        await pool.query('DELETE FROM posts WHERE id = $1', [req.params.id]);
+        res.status(204).send();
+    } catch (err) { console.error(err); res.status(500).send('서버 오류'); }
+});
+
+
+
 app.put('/api/admin/posts/:id', authenticateToken, async (req, res) => { const { title, content } = req.body; try { const result = await pool.query('UPDATE posts SET title = $1, content = $2, updated_at = NOW() WHERE id = $3 RETURNING *', [title, content, req.params.id]); if (result.rows.length === 0) return res.status(404).send('게시글을 찾을 수 없습니다.'); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 app.delete('/api/admin/posts/:id', authenticateToken, async (req, res) => { try { const result = await pool.query('DELETE FROM posts WHERE id = $1', [req.params.id]); if (result.rowCount === 0) return res.status(404).send('게시글을 찾을 수 없습니다.'); res.status(204).send(); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 
