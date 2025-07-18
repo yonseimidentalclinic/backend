@@ -136,6 +136,16 @@ async function initializeDatabase() {
       );
     `;
 
+     // [핵심 추가] 예약 불가 시간 테이블 생성
+    const createBlockedSlotsTable = `
+      CREATE TABLE IF NOT EXISTS blocked_slots (
+        id SERIAL PRIMARY KEY,
+        slot_date DATE NOT NULL,
+        slot_time VARCHAR(50) NOT NULL,
+        UNIQUE(slot_date, slot_time)
+      );
+    `;
+
 
      
 
@@ -153,6 +163,7 @@ async function initializeDatabase() {
     await client.query(alterCommentsTableLikes);
     await client.query(alterCommentsTableTags);
     await client.query(createReservationsTable);
+    await client.query(createBlockedSlotsTable);
     await client.query(createCasePhotosTable);
     await client.query(createFaqsTable);
     console.log('모든 테이블이 준비되었습니다.');
@@ -835,6 +846,84 @@ app.delete('/api/admin/faqs/:id', authenticateToken, async (req, res) => {
         res.status(204).send();
     } catch (err) {
         console.error('FAQ 삭제 중 DB 오류:', err);
+        res.status(500).send('서버 오류');
+    }
+});
+
+// [핵심 추가] --- 예약 스케줄 API ---
+// 특정 월의 예약 현황 + 예약 불가 시간을 함께 조회 (Public)
+app.get('/api/schedule', async (req, res) => {
+    const { year, month } = req.query;
+    if (!year || !month) {
+        return res.status(400).send('Year and month are required.');
+    }
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 1);
+
+    try {
+        const confirmedReservationsPromise = pool.query(
+            "SELECT desired_date, desired_time FROM reservations WHERE status = 'confirmed' AND desired_date >= $1 AND desired_date < $2",
+            [startDate, endDate]
+        );
+        const blockedSlotsPromise = pool.query(
+            "SELECT slot_date, slot_time FROM blocked_slots WHERE slot_date >= $1 AND slot_date < $2",
+            [startDate, endDate]
+        );
+
+        const [confirmedReservationsResult, blockedSlotsResult] = await Promise.all([
+            confirmedReservationsPromise,
+            blockedSlotsPromise
+        ]);
+        
+        const bookedSlots = {};
+        
+        confirmedReservationsResult.rows.forEach(row => {
+            const date = new Date(row.desired_date).toISOString().split('T')[0];
+            if (!bookedSlots[date]) bookedSlots[date] = [];
+            bookedSlots[date].push(row.desired_time);
+        });
+
+        blockedSlotsResult.rows.forEach(row => {
+            const date = new Date(row.slot_date).toISOString().split('T')[0];
+            if (!bookedSlots[date]) bookedSlots[date] = [];
+            if (!bookedSlots[date].includes(row.slot_time)) {
+                bookedSlots[date].push(row.slot_time);
+            }
+        });
+
+        res.json(bookedSlots);
+    } catch (err) {
+        console.error('스케줄 조회 오류:', err);
+        res.status(500).send('서버 오류');
+    }
+});
+
+// 예약 불가 시간 추가 (Admin)
+app.post('/api/admin/blocked-slots', authenticateToken, async (req, res) => {
+    const { slotDate, slotTime } = req.body;
+    try {
+        await pool.query(
+            'INSERT INTO blocked_slots (slot_date, slot_time) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+            [slotDate, slotTime]
+        );
+        res.status(201).send();
+    } catch (err) {
+        console.error('예약 불가 시간 추가 오류:', err);
+        res.status(500).send('서버 오류');
+    }
+});
+
+// 예약 불가 시간 삭제 (Admin)
+app.delete('/api/admin/blocked-slots', authenticateToken, async (req, res) => {
+    const { slotDate, slotTime } = req.body;
+    try {
+        await pool.query(
+            'DELETE FROM blocked_slots WHERE slot_date = $1 AND slot_time = $2',
+            [slotDate, slotTime]
+        );
+        res.status(204).send();
+    } catch (err) {
+        console.error('예약 불가 시간 삭제 오류:', err);
         res.status(500).send('서버 오류');
     }
 });
