@@ -18,6 +18,7 @@ const multer = require('multer');
 const bcrypt = require('bcrypt'); // [핵심 수정] 암호화 라이브러리 정상적으로 import
 
 const app = express();
+app.set('trust proxy', true); // Render.com 프록시 환경에서 정확한 IP를 얻기 위해 필요
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -160,6 +161,17 @@ async function initializeDatabase() {
       );
     `;
 
+     // [핵심 추가] 관리자 접근 기록 테이블 생성
+    const createAdminLogsTable = `
+      CREATE TABLE IF NOT EXISTS admin_logs (
+        id SERIAL PRIMARY KEY,
+        action VARCHAR(100) NOT NULL,
+        ip_address VARCHAR(100),
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `;
+
+
 
 
     await client.query(createNoticesTable);
@@ -178,6 +190,7 @@ async function initializeDatabase() {
     await client.query(createCasePhotosTable);
     await client.query(createFaqsTable);
     await client.query(createReviewsTable);
+    await client.query(createAdminLogsTable);
     console.log('모든 테이블이 준비되었습니다.');
 
   } catch (err) {
@@ -193,7 +206,46 @@ const authenticateToken = (req, res, next) => { const authHeader = req.headers['
 
 // API 라우트
 app.all('/', (req, res) => { res.send('연세미치과 백엔드 서버가 정상적으로 작동 중입니다.'); });
-app.post('/api/admin/login', (req, res) => { const { password } = req.body; if (password === process.env.ADMIN_PASSWORD) { const user = { name: 'admin' }; const accessToken = jwt.sign(user, process.env.JWT_SECRET, { expiresIn: '12h' }); res.json({ accessToken }); } else { res.status(401).send('비밀번호가 올바르지 않습니다.'); } });
+
+// [핵심 수정] --- 관리자 로그인 API ---
+app.post('/api/admin/login', async (req, res) => {
+  const { password } = req.body;
+  if (password === process.env.ADMIN_PASSWORD) {
+    try {
+      // 로그인 성공 시 기록 남기기
+      const ip = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+      await pool.query(
+        'INSERT INTO admin_logs (action, ip_address) VALUES ($1, $2)',
+        ['login_success', ip]
+      );
+      
+      const user = { name: 'admin' };
+      const accessToken = jwt.sign(user, process.env.JWT_SECRET, { expiresIn: '12h' });
+      res.json({ accessToken });
+
+    } catch (logError) {
+      console.error('로그인 기록 중 오류 발생:', logError);
+      // 로그 기록에 실패해도 로그인은 성공시켜야 함
+      const user = { name: 'admin' };
+      const accessToken = jwt.sign(user, process.env.JWT_SECRET, { expiresIn: '12h' });
+      res.json({ accessToken });
+    }
+  } else {
+    res.status(401).send('비밀번호가 올바르지 않습니다.');
+  }
+});
+
+// [핵심 추가] --- 관리자 접근 기록 API ---
+app.get('/api/admin/logs', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM admin_logs ORDER BY created_at DESC LIMIT 100'); // 최근 100개만 조회
+    res.json(toCamelCase(result.rows));
+  } catch (err) {
+    console.error('접근 기록 조회 오류:', err);
+    res.status(500).send('서버 오류');
+  }
+});
+
 
 // --- 대시보드 API ---
 app.get('/api/admin/dashboard-summary', authenticateToken, async (req, res) => {
