@@ -125,6 +125,18 @@ async function initializeDatabase() {
       );
     `;
 
+    // [핵심 추가] FAQ 테이블 생성
+    const createFaqsTable = `
+      CREATE TABLE IF NOT EXISTS faqs (
+        id SERIAL PRIMARY KEY,
+        category VARCHAR(100) NOT NULL,
+        question TEXT NOT NULL,
+        answer TEXT NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `;
+
+
      
 
 
@@ -142,6 +154,7 @@ async function initializeDatabase() {
     await client.query(alterCommentsTableTags);
     await client.query(createReservationsTable);
     await client.query(createCasePhotosTable);
+    await client.query(createFaqsTable);
     console.log('모든 테이블이 준비되었습니다.');
 
   } catch (err) {
@@ -767,6 +780,61 @@ app.delete('/api/admin/cases/:id', authenticateToken, async (req, res) => {
         res.status(204).send();
     } catch (err) {
         console.error('치료 사례 삭제 중 DB 오류:', err);
+        res.status(500).send('서버 오류');
+    }
+});
+
+// [핵심 추가] --- FAQ API ---
+// GET (Public)
+app.get('/api/faqs', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM faqs ORDER BY category, id ASC');
+    res.json(toCamelCase(result.rows));
+  } catch (err) {
+    console.error('FAQ 조회 오류:', err);
+    res.status(500).send('서버 오류');
+  }
+});
+
+// POST (Admin)
+app.post('/api/admin/faqs', authenticateToken, async (req, res) => {
+    const { category, question, answer } = req.body;
+    try {
+        const result = await pool.query(
+            'INSERT INTO faqs (category, question, answer) VALUES ($1, $2, $3) RETURNING *',
+            [category, question, answer]
+        );
+        res.status(201).json(toCamelCase(result.rows)[0]);
+    } catch (err) {
+        console.error('FAQ 추가 중 DB 오류:', err);
+        res.status(500).send('서버 오류');
+    }
+});
+
+// PUT (Admin)
+app.put('/api/admin/faqs/:id', authenticateToken, async (req, res) => {
+    const { category, question, answer } = req.body;
+    try {
+        const result = await pool.query(
+            'UPDATE faqs SET category = $1, question = $2, answer = $3 WHERE id = $4 RETURNING *',
+            [category, question, answer, req.params.id]
+        );
+        if (result.rows.length === 0) return res.status(404).send('FAQ를 찾을 수 없습니다.');
+        res.json(toCamelCase(result.rows)[0]);
+    } catch (err) {
+        console.error('FAQ 수정 중 DB 오류:', err);
+        res.status(500).send('서버 오류');
+    }
+});
+
+// DELETE (Admin)
+app.delete('/api/admin/faqs/:id', authenticateToken, async (req, res) => {
+    try {
+        const result = await pool.query('DELETE FROM faqs WHERE id = $1', [req.params.id]);
+        if (result.rowCount === 0) return res.status(404).send('FAQ를 찾을 수 없습니다.');
+        res.status(204).send();
+    } catch (err) {
+        console.error('FAQ 삭제 중 DB 오류:', err);
         res.status(500).send('서버 오류');
     }
 });
