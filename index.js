@@ -111,6 +111,20 @@ async function initializeDatabase() {
       );
     `;
 
+
+    // [핵심 추가] 치료 전후 사진 갤러리 테이블 생성
+    const createCasePhotosTable = `
+      CREATE TABLE IF NOT EXISTS case_photos (
+        id SERIAL PRIMARY KEY,
+        title VARCHAR(255) NOT NULL,
+        category VARCHAR(100),
+        description TEXT,
+        before_image_data TEXT,
+        after_image_data TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `;
+
      
 
 
@@ -127,6 +141,7 @@ async function initializeDatabase() {
     await client.query(alterCommentsTableLikes);
     await client.query(alterCommentsTableTags);
     await client.query(createReservationsTable);
+    await client.query(createCasePhotosTable);
     console.log('모든 테이블이 준비되었습니다.');
 
   } catch (err) {
@@ -669,6 +684,92 @@ app.delete('/api/admin/reservations/:id', authenticateToken, async (req, res) =>
     }
 });
 
+// [핵심 추가] --- 치료 사례 (Case Photos) API ---
+// GET (Public) - 카테고리별 필터링, 페이지네이션 포함
+app.get('/api/cases', async (req, res) => {
+  const category = req.query.category || '';
+  const page = parseInt(req.query.page, 10) || 1;
+  const limit = parseInt(req.query.limit, 10) || 9; // 3x3 그리드를 위해 9개씩
+  const offset = (page - 1) * limit;
+
+  try {
+    let baseQuery = 'FROM case_photos';
+    let whereClause = '';
+    const queryParams = [];
+
+    if (category) {
+      whereClause = 'WHERE category = $1';
+      queryParams.push(category);
+    }
+
+    const countQuery = `SELECT COUNT(*) ${baseQuery} ${whereClause}`;
+    const countResult = await pool.query(countQuery, queryParams);
+    const totalItems = parseInt(countResult.rows[0].count, 10);
+    const totalPages = Math.ceil(totalItems / limit);
+
+    const itemsQuery = `SELECT * ${baseQuery} ${whereClause} ORDER BY created_at DESC LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
+    queryParams.push(limit, offset);
+    const itemsResult = await pool.query(itemsQuery, queryParams);
+
+    res.json({
+      items: toCamelCase(itemsResult.rows),
+      totalPages,
+      currentPage: page,
+    });
+  } catch (err) {
+    console.error('치료 사례 조회 오류:', err);
+    res.status(500).send('서버 오류');
+  }
+});
+
+// POST (Admin) - 전/후 사진을 함께 받음
+app.post('/api/admin/cases', authenticateToken, upload.fields([{ name: 'beforeImage', maxCount: 1 }, { name: 'afterImage', maxCount: 1 }]), async (req, res) => {
+    const { title, category, description } = req.body;
+    const beforeImageData = req.files['beforeImage'] ? `data:${req.files['beforeImage'][0].mimetype};base64,${req.files['beforeImage'][0].buffer.toString('base64')}` : null;
+    const afterImageData = req.files['afterImage'] ? `data:${req.files['afterImage'][0].mimetype};base64,${req.files['afterImage'][0].buffer.toString('base64')}` : null;
+
+    try {
+        const result = await pool.query(
+            'INSERT INTO case_photos (title, category, description, before_image_data, after_image_data) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+            [title, category, description, beforeImageData, afterImageData]
+        );
+        res.status(201).json(toCamelCase(result.rows)[0]);
+    } catch (err) {
+        console.error('치료 사례 추가 중 DB 오류:', err);
+        res.status(500).send('서버 오류');
+    }
+});
+
+// PUT (Admin)
+app.put('/api/admin/cases/:id', authenticateToken, upload.fields([{ name: 'beforeImage', maxCount: 1 }, { name: 'afterImage', maxCount: 1 }]), async (req, res) => {
+    const { title, category, description, existingBeforeImage, existingAfterImage } = req.body;
+    const beforeImageData = req.files['beforeImage'] ? `data:${req.files['beforeImage'][0].mimetype};base64,${req.files['beforeImage'][0].buffer.toString('base64')}` : existingBeforeImage;
+    const afterImageData = req.files['afterImage'] ? `data:${req.files['afterImage'][0].mimetype};base64,${req.files['afterImage'][0].buffer.toString('base64')}` : existingAfterImage;
+
+    try {
+        const result = await pool.query(
+            'UPDATE case_photos SET title = $1, category = $2, description = $3, before_image_data = $4, after_image_data = $5 WHERE id = $6 RETURNING *',
+            [title, category, description, beforeImageData, afterImageData, req.params.id]
+        );
+        if (result.rows.length === 0) return res.status(404).send('치료 사례를 찾을 수 없습니다.');
+        res.json(toCamelCase(result.rows)[0]);
+    } catch (err) {
+        console.error('치료 사례 수정 중 DB 오류:', err);
+        res.status(500).send('서버 오류');
+    }
+});
+
+// DELETE (Admin)
+app.delete('/api/admin/cases/:id', authenticateToken, async (req, res) => {
+    try {
+        const result = await pool.query('DELETE FROM case_photos WHERE id = $1', [req.params.id]);
+        if (result.rowCount === 0) return res.status(404).send('치료 사례를 찾을 수 없습니다.');
+        res.status(204).send();
+    } catch (err) {
+        console.error('치료 사례 삭제 중 DB 오류:', err);
+        res.status(500).send('서버 오류');
+    }
+});
 
 
 
