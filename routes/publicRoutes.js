@@ -147,7 +147,29 @@ router.get('/cases', async (req, res) => {
     res.status(500).send('서버 오류');
   }
 });
-router.get('/faqs', async (req, res) => { try { const result = await pool.query('SELECT * FROM faqs ORDER BY category, id ASC'); res.json(toCamelCase(result.rows)); } catch (err) { console.error('FAQ 조회 오류:', err); res.status(500).send('서버 오류'); } });
+
+// [핵심 수정] --- FAQ 검색 기능 추가 ---
+router.get('/faqs', async (req, res) => {
+  const searchTerm = req.query.search || '';
+  try {
+    let query = 'SELECT * FROM faqs';
+    const queryParams = [];
+
+    if (searchTerm) {
+      query += ' WHERE (question ILIKE $1 OR answer ILIKE $1)';
+      queryParams.push(`%${searchTerm}%`);
+    }
+
+    query += ' ORDER BY category, id ASC';
+
+    const result = await pool.query(query, queryParams);
+    res.json(toCamelCase(result.rows));
+  } catch (err) {
+    console.error('FAQ 조회 오류:', err);
+    res.status(500).send('서버 오류');
+  }
+});
+
 router.get('/schedule', async (req, res) => {
     const { year, month } = req.query;
     if (!year || !month) return res.status(400).send('Year and month are required.');
@@ -168,7 +190,7 @@ router.get('/schedule', async (req, res) => {
         blockedSlotsResult.rows.forEach(row => {
             const date = new Date(row.slot_date).toISOString().split('T')[0];
             if (!schedule[date]) schedule[date] = {};
-            if (!schedule[date][row.slot_time]) { schedule[date][row.slot_time] = { pending: 0, confirmed: 0, blocked: false }; }
+            if (!schedule[date][row.slot_time]) { schedule[date][row.desired_time] = { pending: 0, confirmed: 0, blocked: false }; }
             schedule[date][row.slot_time].blocked = true;
         });
         res.json(schedule);
@@ -196,4 +218,3 @@ router.get('/reviews', async (req, res) => {
 router.post('/reviews', async (req, res) => { const { patientName, rating, content } = req.body; try { const result = await pool.query('INSERT INTO reviews (patient_name, rating, content) VALUES ($1, $2, $3) RETURNING *', [patientName, rating, content]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error('후기 작성 중 오류:', err); res.status(500).send('서버 오류'); } });
 
 module.exports = router;
-
