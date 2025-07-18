@@ -43,7 +43,8 @@ async function initializeDatabase() {
     console.log('데이터베이스에 성공적으로 연결되었습니다.');
     
     // --- 기존 테이블들 ---
-    const createNoticesTable = `CREATE TABLE IF NOT EXISTS notices (id SERIAL PRIMARY KEY, title VARCHAR(255) NOT NULL, content TEXT NOT NULL, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());`;
+    const createNoticesTable = `CREATE TABLE IF NOT EXISTS notices (id SERIAL PRIMARY KEY, title VARCHAR(255) NOT NULL, category VARCHAR(100), content TEXT NOT NULL, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());`;
+    const alterNoticesTable = `ALTER TABLE notices ADD COLUMN IF NOT EXISTS category VARCHAR(100);`;
     const createPostsTable = `CREATE TABLE IF NOT EXISTS posts (id SERIAL PRIMARY KEY, author VARCHAR(100) NOT NULL, password VARCHAR(255) NOT NULL, title VARCHAR(255) NOT NULL, content TEXT NOT NULL, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());`;
     const createConsultationsTable = `CREATE TABLE IF NOT EXISTS consultations (id SERIAL PRIMARY KEY, author VARCHAR(100) NOT NULL, password VARCHAR(255) NOT NULL, title VARCHAR(255) NOT NULL, content TEXT NOT NULL, is_secret BOOLEAN DEFAULT TRUE, is_answered BOOLEAN DEFAULT FALSE, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());`;
     const createRepliesTable = `CREATE TABLE IF NOT EXISTS replies (id SERIAL PRIMARY KEY, consultation_id INTEGER NOT NULL REFERENCES consultations(id) ON DELETE CASCADE, content TEXT NOT NULL, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());`;
@@ -175,6 +176,7 @@ async function initializeDatabase() {
 
 
     await client.query(createNoticesTable);
+    await client.query(alterNoticesTable);
     await client.query(createPostsTable);
     await client.query(createConsultationsTable);
     await client.query(createRepliesTable);
@@ -330,24 +332,34 @@ app.get('/api/notices', async (req, res) => {
   const limit = parseInt(req.query.limit, 10) || 10; // 한 페이지에 10개씩
   const offset = (page - 1) * limit;
   const searchTerm = req.query.search || '';
+  const category = req.query.category || '';
 
 
   try {
-    let baseQuery = 'FROM notices';
-    let whereClause = '';
+     let baseQuery = 'FROM notices';
+    let whereClauses = [];
     const queryParams = [];
+    let paramIndex = 1;
 
     if (searchTerm) {
-      whereClause = 'WHERE title ILIKE $1 OR content ILIKE $1';
+      whereClauses.push(`(title ILIKE $${paramIndex} OR content ILIKE $${paramIndex})`);
       queryParams.push(`%${searchTerm}%`);
+      paramIndex++;
     }
+    if (category && category !== '전체') {
+      whereClauses.push(`category = $${paramIndex}`);
+      queryParams.push(category);
+      paramIndex++;
+    }
+    
+    const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
 
     const countQuery = `SELECT COUNT(*) ${baseQuery} ${whereClause}`;
     const countResult = await pool.query(countQuery, queryParams);
     const totalItems = parseInt(countResult.rows[0].count, 10);
     const totalPages = Math.ceil(totalItems / limit);
 
-    const itemsQuery = `SELECT * ${baseQuery} ${whereClause} ORDER BY created_at DESC LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
+    const itemsQuery = `SELECT * ${baseQuery} ${whereClause} ORDER BY created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
     queryParams.push(limit, offset);
     const itemsResult = await pool.query(itemsQuery, queryParams);
 
@@ -358,14 +370,35 @@ app.get('/api/notices', async (req, res) => {
       totalItems,
     });
   } catch (err) {
-    console.error('공지사항 목록 조회 오류:',err);
+    console.error('공지사항 목록 조회 오류:', err);
     res.status(500).send('서버 오류');
   }
 });
 
+
 app.get('/api/notices/:id', async (req, res) => { try { const result = await pool.query('SELECT * FROM notices WHERE id = $1', [req.params.id]); if (result.rows.length === 0) return res.status(404).send('공지사항을 찾을 수 없습니다.'); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
-app.post('/api/admin/notices', authenticateToken, async (req, res) => { const { title, content } = req.body; try { const result = await pool.query('INSERT INTO notices (title, content) VALUES ($1, $2) RETURNING *', [title, content]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
-app.put('/api/admin/notices/:id', authenticateToken, async (req, res) => { const { title, content } = req.body; try { const result = await pool.query('UPDATE notices SET title = $1, content = $2, updated_at = NOW() WHERE id = $3 RETURNING *', [title, content, req.params.id]); if (result.rows.length === 0) return res.status(404).send('공지사항을 찾을 수 없습니다.'); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
+app.post('/api/admin/notices', authenticateToken, async (req, res) => {
+    const { title, content, category } = req.body;
+    try {
+        const result = await pool.query(
+            'INSERT INTO notices (title, content, category) VALUES ($1, $2, $3) RETURNING *',
+            [title, content, category]
+        );
+        res.status(201).json(toCamelCase(result.rows)[0]);
+    } catch (err) { console.error(err); res.status(500).send('서버 오류'); }
+});
+app.put('/api/admin/notices/:id', authenticateToken, async (req, res) => {
+    const { title, content, category } = req.body;
+    try {
+        const result = await pool.query(
+            'UPDATE notices SET title = $1, content = $2, category = $3, updated_at = NOW() WHERE id = $4 RETURNING *',
+            [title, content, category, req.params.id]
+        );
+        if (result.rows.length === 0) return res.status(404).send('공지사항을 찾을 수 없습니다.');
+        res.json(toCamelCase(result.rows)[0]);
+    } catch (err) { console.error(err); res.status(500).send('서버 오류'); }
+});
+
 app.delete('/api/admin/notices/:id', authenticateToken, async (req, res) => { try { const result = await pool.query('DELETE FROM notices WHERE id = $1', [req.params.id]); if (result.rowCount === 0) return res.status(404).send('공지사항을 찾을 수 없습니다.'); res.status(204).send(); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 // 자유게시판 API
  // [핵심 수정] --- 자유게시판 (Posts) API ---
