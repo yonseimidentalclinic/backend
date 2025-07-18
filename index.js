@@ -147,7 +147,18 @@ async function initializeDatabase() {
     `;
 
 
-     
+     // [핵심 추가] 사용자 후기 테이블 생성
+    const createReviewsTable = `
+      CREATE TABLE IF NOT EXISTS reviews (
+        id SERIAL PRIMARY KEY,
+        patient_name VARCHAR(100) NOT NULL,
+        rating INT NOT NULL CHECK (rating >= 1 AND rating <= 5),
+        content TEXT NOT NULL,
+        is_approved BOOLEAN DEFAULT FALSE,
+        admin_reply TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+    `;
 
 
 
@@ -166,6 +177,7 @@ async function initializeDatabase() {
     await client.query(createBlockedSlotsTable);
     await client.query(createCasePhotosTable);
     await client.query(createFaqsTable);
+    await client.query(createReviewsTable);
     console.log('모든 테이블이 준비되었습니다.');
 
   } catch (err) {
@@ -933,6 +945,78 @@ app.delete('/api/admin/blocked-slots', authenticateToken, async (req, res) => {
         res.status(500).send('서버 오류');
     }
 });
+
+// [핵심 추가] --- 사용자 후기 (Reviews) API ---
+// GET (Public) - 승인된 후기만, 페이지네이션 포함
+app.get('/api/reviews', async (req, res) => {
+  const page = parseInt(req.query.page, 10) || 1;
+  const limit = parseInt(req.query.limit, 10) || 5;
+  const offset = (page - 1) * limit;
+  try {
+    const itemsPromise = pool.query("SELECT * FROM reviews WHERE is_approved = TRUE ORDER BY created_at DESC LIMIT $1 OFFSET $2", [limit, offset]);
+    const countPromise = pool.query('SELECT COUNT(*) FROM reviews WHERE is_approved = TRUE');
+    const [itemsResult, countResult] = await Promise.all([itemsPromise, countPromise]);
+    const totalItems = parseInt(countResult.rows[0].count, 10);
+    const totalPages = Math.ceil(totalItems / limit);
+    res.json({ items: toCamelCase(itemsResult.rows), totalPages, currentPage: page });
+  } catch (err) { console.error('후기 조회 오류:', err); res.status(500).send('서버 오류'); }
+});
+
+// POST (Public) - 후기 작성
+app.post('/api/reviews', async (req, res) => {
+    const { patientName, rating, content } = req.body;
+    try {
+        const result = await pool.query(
+            'INSERT INTO reviews (patient_name, rating, content) VALUES ($1, $2, $3) RETURNING *',
+            [patientName, rating, content]
+        );
+        res.status(201).json(toCamelCase(result.rows)[0]);
+    } catch (err) { console.error('후기 작성 중 오류:', err); res.status(500).send('서버 오류'); }
+});
+
+// GET (Admin) - 모든 후기 조회
+app.get('/api/admin/reviews', authenticateToken, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM reviews ORDER BY created_at DESC');
+        res.json(toCamelCase(result.rows));
+    } catch (err) { console.error('관리자 후기 조회 오류:', err); res.status(500).send('서버 오류'); }
+});
+
+// PUT (Admin) - 후기 승인/비승인 토글
+app.put('/api/admin/reviews/:id/approve', authenticateToken, async (req, res) => {
+    const { isApproved } = req.body;
+    try {
+        const result = await pool.query(
+            'UPDATE reviews SET is_approved = $1 WHERE id = $2 RETURNING *',
+            [isApproved, req.params.id]
+        );
+        if (result.rows.length === 0) return res.status(404).send('후기를 찾을 수 없습니다.');
+        res.json(toCamelCase(result.rows)[0]);
+    } catch (err) { console.error('후기 승인 오류:', err); res.status(500).send('서버 오류'); }
+});
+
+// POST (Admin) - 관리자 답글 추가/수정
+app.post('/api/admin/reviews/:id/reply', authenticateToken, async (req, res) => {
+    const { reply } = req.body;
+    try {
+        const result = await pool.query(
+            'UPDATE reviews SET admin_reply = $1 WHERE id = $2 RETURNING *',
+            [reply, req.params.id]
+        );
+        if (result.rows.length === 0) return res.status(404).send('후기를 찾을 수 없습니다.');
+        res.json(toCamelCase(result.rows)[0]);
+    } catch (err) { console.error('답글 작성 오류:', err); res.status(500).send('서버 오류'); }
+});
+
+// DELETE (Admin) - 후기 삭제
+app.delete('/api/admin/reviews/:id', authenticateToken, async (req, res) => {
+    try {
+        const result = await pool.query('DELETE FROM reviews WHERE id = $1', [req.params.id]);
+        if (result.rowCount === 0) return res.status(404).send('후기를 찾을 수 없습니다.');
+        res.status(204).send();
+    } catch (err) { console.error('후기 삭제 오류:', err); res.status(500).send('서버 오류'); }
+});
+
 
 
 
