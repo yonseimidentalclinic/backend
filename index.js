@@ -854,15 +854,15 @@ app.delete('/api/admin/faqs/:id', authenticateToken, async (req, res) => {
 // 특정 월의 예약 현황 + 예약 불가 시간을 함께 조회 (Public)
 app.get('/api/schedule', async (req, res) => {
     const { year, month } = req.query;
-    if (!year || !month) {
-        return res.status(400).send('Year and month are required.');
-    }
+    if (!year || !month) return res.status(400).send('Year and month are required.');
+    
     const startDate = new Date(year, month - 1, 1);
     const endDate = new Date(year, month, 1);
 
     try {
-        const confirmedReservationsPromise = pool.query(
-            "SELECT desired_date, desired_time FROM reservations WHERE status = 'confirmed' AND desired_date >= $1 AND desired_date < $2",
+        // 모든 예약(대기, 확정 등)을 가져옵니다.
+        const reservationsPromise = pool.query(
+            "SELECT desired_date, desired_time, status FROM reservations WHERE desired_date >= $1 AND desired_date < $2",
             [startDate, endDate]
         );
         const blockedSlotsPromise = pool.query(
@@ -870,28 +870,34 @@ app.get('/api/schedule', async (req, res) => {
             [startDate, endDate]
         );
 
-        const [confirmedReservationsResult, blockedSlotsResult] = await Promise.all([
-            confirmedReservationsPromise,
+        const [reservationsResult, blockedSlotsResult] = await Promise.all([
+            reservationsPromise,
             blockedSlotsPromise
         ]);
         
-        const bookedSlots = {};
+        const schedule = {};
         
-        confirmedReservationsResult.rows.forEach(row => {
+        reservationsResult.rows.forEach(row => {
             const date = new Date(row.desired_date).toISOString().split('T')[0];
-            if (!bookedSlots[date]) bookedSlots[date] = [];
-            bookedSlots[date].push(row.desired_time);
+            if (!schedule[date]) schedule[date] = {};
+            // 한 시간에 여러 예약이 있을 수 있으므로, 상태별로 카운트합니다.
+            if (!schedule[date][row.desired_time]) {
+                schedule[date][row.desired_time] = { pending: 0, confirmed: 0, blocked: false };
+            }
+            if (row.status === 'pending') schedule[date][row.desired_time].pending++;
+            if (row.status === 'confirmed') schedule[date][row.desired_time].confirmed++;
         });
 
         blockedSlotsResult.rows.forEach(row => {
             const date = new Date(row.slot_date).toISOString().split('T')[0];
-            if (!bookedSlots[date]) bookedSlots[date] = [];
-            if (!bookedSlots[date].includes(row.slot_time)) {
-                bookedSlots[date].push(row.slot_time);
+            if (!schedule[date]) schedule[date] = {};
+            if (!schedule[date][row.slot_time]) {
+                schedule[date][row.slot_time] = { pending: 0, confirmed: 0, blocked: false };
             }
+            schedule[date][row.slot_time].blocked = true;
         });
 
-        res.json(bookedSlots);
+        res.json(schedule);
     } catch (err) {
         console.error('스케줄 조회 오류:', err);
         res.status(500).send('서버 오류');
