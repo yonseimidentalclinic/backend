@@ -18,6 +18,19 @@ const multer = require('multer');
 const bcrypt = require('bcrypt'); // [핵심 수정] 암호화 라이브러리 정상적으로 import
 
 const app = express();
+
+// --- CORS 설정 (이 부분을 수정 또는 추가해야 합니다) ---
+
+// 허용할 프론트엔드 주소를 정확하게 명시합니다.
+const corsOptions = {
+  origin: 'https://yondentalclinic.vercel.app', // Vercel 프론트엔드 주소
+  credentials: true, // 자격 증명(쿠키, 인증 헤더 등)을 포함한 요청을 허용
+};
+
+// 수정된 CORS 옵션을 Express 앱에 적용합니다.
+app.use(cors(corsOptions));
+
+
 app.set('trust proxy', true); // Render.com 프록시 환경에서 정확한 IP를 얻기 위해 필요
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
