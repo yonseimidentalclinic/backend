@@ -6,6 +6,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken'); // 예약 관리를 위한 JWT 추가
 const { pool } = require('../config/db');
 const { toCamelCase } = require('../utils/helpers');
+const upload = require('../middleware/upload'); // 이미지 업로드 미들웨어
 const saltRounds = 10;
 
 // --- [새 기능] 예약 확인 및 관리를 위한 미들웨어 ---
