@@ -74,7 +74,21 @@ router.get('/posts', async (req, res) => {
 });
 router.get('/posts/:id', async (req, res) => { try { const postResult = await pool.query('SELECT * FROM posts WHERE id = $1', [req.params.id]); if (postResult.rows.length === 0) return res.status(404).send('게시글을 찾을 수 없습니다.'); const commentsResult = await pool.query('SELECT * FROM post_comments WHERE post_id = $1 ORDER BY created_at ASC', [req.params.id]); const post = toCamelCase(postResult.rows)[0]; const comments = toCamelCase(commentsResult.rows); res.json({ ...post, comments }); } catch (err) { console.error(err); res.status(500).send('서버 오류'); }});
 router.post('/posts', async (req, res) => { const { author, password, title, content } = req.body; try { const hashedPassword = await bcrypt.hash(password, saltRounds); const result = await pool.query('INSERT INTO posts (author, password, title, content) VALUES ($1, $2, $3, $4) RETURNING *', [author, hashedPassword, title, content]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
-router.post('/posts/:id/verify', async (req, res) => { try { const { password } = req.body; const result = await pool.query('SELECT password FROM posts WHERE id = $1', [req.params.id]); if (result.rows.length === 0) return res.status(404).json({ success: false, message: '게시글을 찾을 수 없습니다.' }); const match = await bcrypt.compare(password, result.rows[0].password); res.json({ success: match }); } catch (err) { console.error(err); res.status(500).json({ success: false, message: '서버 오류' }); } });
+
+// *** 핵심 수정: 누락된 비밀번호 확인 API를 추가했습니다. ***
+router.post('/posts/:id/verify', async (req, res) => { 
+    try { 
+        const { password } = req.body; 
+        const result = await pool.query('SELECT password FROM posts WHERE id = $1', [req.params.id]); 
+        if (result.rows.length === 0) return res.status(404).json({ success: false, message: '게시글을 찾을 수 없습니다.' }); 
+        const match = await bcrypt.compare(password, result.rows[0].password); 
+        res.json({ success: match }); 
+    } catch (err) { 
+        console.error(err); 
+        res.status(500).json({ success: false, message: '서버 오류' }); 
+    } 
+});
+
 router.put('/posts/:id', async (req, res) => { const { title, content, password } = req.body; try { const verifyResult = await pool.query('SELECT password FROM posts WHERE id = $1', [req.params.id]); if (verifyResult.rows.length === 0) return res.status(404).send('게시글을 찾을 수 없습니다.'); const match = await bcrypt.compare(password, verifyResult.rows[0].password); if (!match) return res.status(403).send('비밀번호가 올바르지 않습니다.'); const result = await pool.query('UPDATE posts SET title = $1, content = $2, updated_at = NOW() WHERE id = $3 RETURNING *', [title, content, req.params.id]); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 router.delete('/posts/:id', async (req, res) => { const { password } = req.body; try { const verifyResult = await pool.query('SELECT password FROM posts WHERE id = $1', [req.params.id]); if (verifyResult.rows.length === 0) return res.status(404).send('게시글을 찾을 수 없습니다.'); const match = await bcrypt.compare(password, verifyResult.rows[0].password); if (!match) return res.status(403).send('비밀번호가 올바르지 않습니다.'); await pool.query('DELETE FROM posts WHERE id = $1', [req.params.id]); res.status(204).send(); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 
@@ -113,7 +127,21 @@ router.get('/consultations', async (req, res) => {
 });
 router.get('/consultations/:id', async (req, res) => { try { const consultationResult = await pool.query('SELECT * FROM consultations WHERE id = $1', [req.params.id]); if (consultationResult.rows.length === 0) return res.status(404).send('상담글을 찾을 수 없습니다.'); const replyResult = await pool.query('SELECT * FROM replies WHERE consultation_id = $1 ORDER BY created_at DESC', [req.params.id]); const consultation = toCamelCase(consultationResult.rows)[0]; const replies = toCamelCase(replyResult.rows); res.json({ ...consultation, replies }); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 router.post('/consultations', async (req, res) => { const { author, password, title, content, isSecret } = req.body; try { const hashedPassword = await bcrypt.hash(password, saltRounds); const result = await pool.query('INSERT INTO consultations (author, password, title, content, is_secret) VALUES ($1, $2, $3, $4, $5) RETURNING *', [author, hashedPassword, title, content, isSecret]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
-router.post('/consultations/:id/verify', async (req, res) => { try { const { password } = req.body; const result = await pool.query('SELECT password FROM consultations WHERE id = $1', [req.params.id]); if (result.rows.length === 0) return res.status(404).json({ success: false, message: '상담글을 찾을 수 없습니다.' }); const match = await bcrypt.compare(password, result.rows[0].password); res.json({ success: match }); } catch (err) { console.error(err); res.status(500).json({ success: false, message: '서버 오류' }); } });
+
+// *** 핵심 수정: 누락된 비밀번호 확인 API를 추가했습니다. ***
+router.post('/consultations/:id/verify', async (req, res) => { 
+    try { 
+        const { password } = req.body; 
+        const result = await pool.query('SELECT password FROM consultations WHERE id = $1', [req.params.id]); 
+        if (result.rows.length === 0) return res.status(404).json({ success: false, message: '상담글을 찾을 수 없습니다.' }); 
+        const match = await bcrypt.compare(password, result.rows[0].password); 
+        res.json({ success: match }); 
+    } catch (err) { 
+        console.error(err); 
+        res.status(500).json({ success: false, message: '서버 오류' }); 
+    } 
+});
+
 router.put('/consultations/:id', async (req, res) => { const { title, content, password } = req.body; try { const verifyResult = await pool.query('SELECT password FROM consultations WHERE id = $1', [req.params.id]); if (verifyResult.rows.length === 0) return res.status(404).send('상담글을 찾을 수 없습니다.'); const match = await bcrypt.compare(password, verifyResult.rows[0].password); if (!match) return res.status(403).send('비밀번호가 올바르지 않습니다.'); const result = await pool.query('UPDATE consultations SET title = $1, content = $2, updated_at = NOW() WHERE id = $3 RETURNING *', [title, content, req.params.id]); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 router.delete('/consultations/:id', async (req, res) => { const { password } = req.body; try { const verifyResult = await pool.query('SELECT password FROM consultations WHERE id = $1', [req.params.id]); if (verifyResult.rows.length === 0) return res.status(404).send('상담글을 찾을 수 없습니다.'); const match = await bcrypt.compare(password, verifyResult.rows[0].password); if (!match) return res.status(403).send('비밀번호가 올바르지 않습니다.'); await pool.query('DELETE FROM consultations WHERE id = $1', [req.params.id]); res.status(204).send(); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 
@@ -147,21 +175,16 @@ router.get('/cases', async (req, res) => {
     res.status(500).send('서버 오류');
   }
 });
-
-// [핵심 수정] --- FAQ 검색 기능 추가 ---
 router.get('/faqs', async (req, res) => {
   const searchTerm = req.query.search || '';
   try {
     let query = 'SELECT * FROM faqs';
     const queryParams = [];
-
     if (searchTerm) {
       query += ' WHERE (question ILIKE $1 OR answer ILIKE $1)';
       queryParams.push(`%${searchTerm}%`);
     }
-
     query += ' ORDER BY category, id ASC';
-
     const result = await pool.query(query, queryParams);
     res.json(toCamelCase(result.rows));
   } catch (err) {
@@ -169,7 +192,6 @@ router.get('/faqs', async (req, res) => {
     res.status(500).send('서버 오류');
   }
 });
-
 router.get('/schedule', async (req, res) => {
     const { year, month } = req.query;
     if (!year || !month) return res.status(400).send('Year and month are required.');
