@@ -145,6 +145,17 @@ router.delete('/doctors/:id', authenticateToken, async (req, res) => { try { con
 router.put('/about', authenticateToken, async (req, res) => { const { title, subtitle, content, imageData } = req.body; try { const result = await pool.query('UPDATE about_content SET title = $1, subtitle = $2, content = $3, image_data = $4, updated_at = NOW() WHERE id = 1 RETURNING *', [title, subtitle, content, imageData]); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error('병원소개 업데이트 중 DB 오류:', err); res.status(500).send('서버 오류'); } });
 
 // --- 병원 사진 관리 ---
+router.get('/clinic-photos', authenticateToken, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM clinic_photos ORDER BY display_order ASC, id ASC');
+        res.json(toCamelCase(result.rows));
+    } catch (err) {
+        console.error('관리자용 병원 사진 조회 오류:', err);
+        res.status(500).send('서버 오류');
+    }
+});
+
+
 router.post('/clinic-photos', authenticateToken, upload.single('image'), async (req, res) => { const { caption } = req.body; const imageData = req.file ? `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}` : null; if (!imageData) { return res.status(400).send('이미지 파일이 없습니다.'); } try { const result = await pool.query('INSERT INTO clinic_photos (caption, image_data) VALUES ($1, $2) RETURNING *', [caption, imageData]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error('병원 사진 추가 중 DB 오류:', err); res.status(500).send('서버 오류'); } });
 router.delete('/clinic-photos/:id', authenticateToken, async (req, res) => { try { const result = await pool.query('DELETE FROM clinic_photos WHERE id = $1', [req.params.id]); if (result.rowCount === 0) return res.status(404).send('사진 정보를 찾을 수 없습니다.'); res.status(204).send(); } catch (err) { console.error('병원 사진 삭제 중 DB 오류:', err); res.status(500).send('서버 오류'); } });
 
