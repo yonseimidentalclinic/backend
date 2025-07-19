@@ -23,6 +23,11 @@ const initializeDatabase = async () => {
       `ALTER TABLE notices ADD COLUMN IF NOT EXISTS category VARCHAR(100);`,
       `CREATE TABLE IF NOT EXISTS posts (id SERIAL PRIMARY KEY, author VARCHAR(100) NOT NULL, password VARCHAR(255) NOT NULL, title VARCHAR(255) NOT NULL, content TEXT NOT NULL, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());`,
       `CREATE TABLE IF NOT EXISTS consultations (id SERIAL PRIMARY KEY, author VARCHAR(100) NOT NULL, password VARCHAR(255) NOT NULL, title VARCHAR(255) NOT NULL, content TEXT NOT NULL, is_secret BOOLEAN DEFAULT TRUE, is_answered BOOLEAN DEFAULT FALSE, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());`,
+      
+      // --- 핵심 수정: posts와 consultations 테이블에 이미지 데이터 컬럼을 추가합니다. ---
+      `ALTER TABLE posts ADD COLUMN IF NOT EXISTS image_data TEXT;`,
+      `ALTER TABLE consultations ADD COLUMN IF NOT EXISTS image_data TEXT;`,
+
       `CREATE TABLE IF NOT EXISTS replies (id SERIAL PRIMARY KEY, consultation_id INTEGER NOT NULL REFERENCES consultations(id) ON DELETE CASCADE, content TEXT NOT NULL, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());`,
       `CREATE TABLE IF NOT EXISTS doctors (id SERIAL PRIMARY KEY, name VARCHAR(100) NOT NULL, position VARCHAR(100) NOT NULL, history TEXT, image_data TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());`,
       `CREATE TABLE IF NOT EXISTS about_content (id INT PRIMARY KEY DEFAULT 1, title TEXT, subtitle TEXT, content TEXT, image_data TEXT, updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());`,
@@ -39,7 +44,6 @@ const initializeDatabase = async () => {
       `CREATE TABLE IF NOT EXISTS admin_logs (id SERIAL PRIMARY KEY, action VARCHAR(100) NOT NULL, ip_address VARCHAR(100), created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());`
     ];
 
-    // 모든 쿼리를 순차적으로 실행
     for (const query of queries) {
       await client.query(query);
     }

@@ -120,6 +120,29 @@ router.post('/posts/comments/:commentId/like', async (req, res) => { const { com
 router.post('/posts/comments/:commentId/tags', async (req, res) => { const { tag } = req.body; const { commentId } = req.params; if (!tag || !tag.trim()) return res.status(400).send('태그 내용이 없습니다.'); try { const currentTagsResult = await pool.query('SELECT tags FROM post_comments WHERE id = $1', [commentId]); if (currentTagsResult.rows.length === 0) return res.status(404).send('댓글을 찾을 수 없습니다.'); const currentTags = currentTagsResult.rows[0].tags ? currentTagsResult.rows[0].tags.split(',') : []; if (!currentTags.includes(tag.trim())) { currentTags.push(tag.trim()); } const newTags = currentTags.join(','); const result = await pool.query('UPDATE post_comments SET tags = $1 WHERE id = $2 RETURNING tags', [newTags, commentId]); res.status(200).json(result.rows[0]); } catch (err) { console.error('태그 추가 중 오류:', err); res.status(500).send('서버 오류'); } });
 router.delete('/posts/comments/:commentId', async (req, res) => { const { password } = req.body; const { commentId } = req.params; try { const result = await pool.query('SELECT password FROM post_comments WHERE id = $1', [commentId]); if (result.rows.length === 0) return res.status(404).send('댓글을 찾을 수 없습니다.'); const match = await bcrypt.compare(password, result.rows[0].password); if (!match) return res.status(403).send('비밀번호가 올바르지 않습니다.'); await pool.query('DELETE FROM post_comments WHERE id = $1', [commentId]); res.status(204).send(); } catch (err) { console.error('댓글 삭제 중 오류:', err); res.status(500).send('서버 오류'); } });
 
+// [핵심 수정] 자유게시판 글 작성: 이미지 업로드 기능 추가
+router.post('/posts', upload.single('image'), async (req, res) => { 
+    const { author, password, title, content } = req.body; 
+    // multer가 req.file에 이미지 정보를 담아줍니다.
+    const imageData = req.file ? `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}` : null;
+    
+    try { 
+        const hashedPassword = await bcrypt.hash(password, saltRounds); 
+        const result = await pool.query(
+            'INSERT INTO posts (author, password, title, content, image_data) VALUES ($1, $2, $3, $4, $5) RETURNING *', 
+            [author, hashedPassword, title, content, imageData]
+        ); 
+        res.status(201).json(toCamelCase(result.rows)[0]); 
+    } catch (err) { 
+        console.error(err); 
+        res.status(500).send('서버 오류'); 
+    } 
+});
+
+
+
+
+
 // --- 온라인 상담 ---
 router.get('/consultations', async (req, res) => {
   const page = parseInt(req.query.page, 10) || 1;
@@ -166,6 +189,30 @@ router.post('/consultations/:id/verify', async (req, res) => {
 
 router.put('/consultations/:id', async (req, res) => { const { title, content, password } = req.body; try { const verifyResult = await pool.query('SELECT password FROM consultations WHERE id = $1', [req.params.id]); if (verifyResult.rows.length === 0) return res.status(404).send('상담글을 찾을 수 없습니다.'); const match = await bcrypt.compare(password, verifyResult.rows[0].password); if (!match) return res.status(403).send('비밀번호가 올바르지 않습니다.'); const result = await pool.query('UPDATE consultations SET title = $1, content = $2, updated_at = NOW() WHERE id = $3 RETURNING *', [title, content, req.params.id]); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 router.delete('/consultations/:id', async (req, res) => { const { password } = req.body; try { const verifyResult = await pool.query('SELECT password FROM consultations WHERE id = $1', [req.params.id]); if (verifyResult.rows.length === 0) return res.status(404).send('상담글을 찾을 수 없습니다.'); const match = await bcrypt.compare(password, verifyResult.rows[0].password); if (!match) return res.status(403).send('비밀번호가 올바르지 않습니다.'); await pool.query('DELETE FROM consultations WHERE id = $1', [req.params.id]); res.status(204).send(); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
+
+// [핵심 수정] 온라인상담 글 작성: 이미지 업로드 기능 추가
+router.post('/consultations', upload.single('image'), async (req, res) => { 
+    const { author, password, title, content, isSecret } = req.body; 
+    const imageData = req.file ? `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}` : null;
+
+    try { 
+        const hashedPassword = await bcrypt.hash(password, saltRounds); 
+        const result = await pool.query(
+            'INSERT INTO consultations (author, password, title, content, is_secret, image_data) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *', 
+            [author, hashedPassword, title, content, isSecret, imageData]
+        ); 
+        res.status(201).json(toCamelCase(result.rows)[0]); 
+    } catch (err) { 
+        console.error(err); 
+        res.status(500).send('서버 오류'); 
+    } 
+});
+
+
+
+
+
+
 
 // --- 기타 공개 정보 ---
 router.get('/doctors', async (req, res) => { try { const result = await pool.query('SELECT * FROM doctors ORDER BY id ASC'); res.json(toCamelCase(result.rows)); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
