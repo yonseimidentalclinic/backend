@@ -341,4 +341,32 @@ router.get('/reviews', async (req, res) => {
 });
 router.post('/reviews', async (req, res) => { const { patientName, rating, content } = req.body; try { const result = await pool.query('INSERT INTO reviews (patient_name, rating, content) VALUES ($1, $2, $3) RETURNING *', [patientName, rating, content]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error('후기 작성 중 오류:', err); res.status(500).send('서버 오류'); } });
 
+// --- [새 기능] 메인 페이지 동적 데이터 ---
+router.get('/home-summary', async (req, res) => {
+  try {
+    const noticesPromise = pool.query('SELECT id, title, created_at FROM notices ORDER BY created_at DESC LIMIT 3');
+    const casesPromise = pool.query('SELECT id, title, category, before_image_data FROM case_photos ORDER BY created_at DESC LIMIT 3');
+    const reviewsPromise = pool.query('SELECT patient_name, rating, content FROM reviews WHERE is_approved = TRUE ORDER BY created_at DESC LIMIT 3');
+
+    const [noticesResult, casesResult, reviewsResult] = await Promise.all([
+      noticesPromise,
+      casesPromise,
+      reviewsPromise
+    ]);
+
+    res.json({
+      notices: toCamelCase(noticesResult.rows),
+      cases: toCamelCase(casesResult.rows),
+      reviews: toCamelCase(reviewsResult.rows),
+    });
+  } catch (err) {
+    console.error('메인 페이지 데이터 조회 오류:', err);
+    res.status(500).send('서버 오류');
+  }
+});
+
+
+
+
+
 module.exports = router;
