@@ -3,9 +3,31 @@
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken'); // 예약 관리를 위한 JWT 추가
 const { pool } = require('../config/db');
 const { toCamelCase } = require('../utils/helpers');
 const saltRounds = 10;
+
+// --- [새 기능] 예약 확인 및 관리를 위한 미들웨어 ---
+const authenticateReservationToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (token == null) return res.sendStatus(401);
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, reservation) => {
+    if (err) return res.sendStatus(403);
+    // 토큰의 ID와 URL 파라미터의 ID가 일치하는지 확인
+    if (reservation.id !== parseInt(req.params.id, 10)) {
+      return res.sendStatus(403);
+    }
+    req.reservation = reservation;
+    next();
+  });
+};
+
+
+
+
 
 // --- 공지사항 ---
 router.get('/notices', async (req, res) => {
@@ -221,6 +243,86 @@ router.get('/schedule', async (req, res) => {
         res.status(500).send('서버 오류');
     }
 });
+
+// --- 온라인 예약 (Reservations) API (기능 추가) ---
+
+// 1. 예약 신청 (기존 기능)
+router.post('/reservations', async (req, res) => { 
+    const { patientName, phoneNumber, desiredDate, desiredTime, notes } = req.body; 
+    try { 
+        const result = await pool.query('INSERT INTO reservations (patient_name, phone_number, desired_date, desired_time, notes) VALUES ($1, $2, $3, $4, $5) RETURNING *', [patientName, phoneNumber, desiredDate, desiredTime, notes]); 
+        res.status(201).json(toCamelCase(result.rows)[0]); 
+    } catch (err) { 
+        console.error('예약 신청 중 오류:', err); 
+        res.status(500).send('서버 오류'); 
+    } 
+});
+
+// 2. [새 기능] 예약 확인 및 인증 토큰 발급
+router.post('/reservations/verify', async (req, res) => {
+  const { patientName, phoneNumber } = req.body;
+  try {
+    const result = await pool.query(
+      'SELECT id FROM reservations WHERE patient_name = $1 AND phone_number = $2',
+      [patientName, phoneNumber]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).send('일치하는 예약 정보를 찾을 수 없습니다.');
+    }
+    const reservation = result.rows[0];
+    // 1시간 동안 유효한 임시 토큰 발급
+    const accessToken = jwt.sign({ id: reservation.id, name: patientName }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    res.json({ accessToken, reservationId: reservation.id });
+  } catch (err) {
+    console.error('예약 확인 중 오류:', err);
+    res.status(500).send('서버 오류');
+  }
+});
+
+// 3. [새 기능] 특정 예약 상세 정보 조회 (인증 필요)
+router.get('/reservations/:id', authenticateReservationToken, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM reservations WHERE id = $1', [req.params.id]);
+    if (result.rows.length === 0) {
+      return res.status(404).send('예약 정보를 찾을 수 없습니다.');
+    }
+    res.json(toCamelCase(result.rows)[0]);
+  } catch (err) {
+    console.error('예약 상세 조회 오류:', err);
+    res.status(500).send('서버 오류');
+  }
+});
+
+// 4. [새 기능] 예약 변경 (인증 필요)
+router.put('/reservations/:id', authenticateReservationToken, async (req, res) => {
+  const { desiredDate, desiredTime, notes } = req.body;
+  try {
+    const result = await pool.query(
+      'UPDATE reservations SET desired_date = $1, desired_time = $2, notes = $3, status = $4 WHERE id = $5 RETURNING *',
+      [desiredDate, desiredTime, notes, 'pending', req.params.id] // 수정 시 상태를 'pending'으로 변경
+    );
+    res.json(toCamelCase(result.rows)[0]);
+  } catch (err) {
+    console.error('예약 변경 중 오류:', err);
+    res.status(500).send('서버 오류');
+  }
+});
+
+// 5. [새 기능] 예약 취소 (인증 필요)
+router.delete('/reservations/:id', authenticateReservationToken, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM reservations WHERE id = $1', [req.params.id]);
+    res.status(204).send(); // 성공적으로 삭제됨 (No Content)
+  } catch (err) {
+    console.error('예약 취소 중 오류:', err);
+    res.status(500).send('서버 오류');
+  }
+});
+
+
+
+
+
 
 // --- 예약 및 후기 작성 ---
 router.post('/reservations', async (req, res) => { const { patientName, phoneNumber, desiredDate, desiredTime, notes } = req.body; try { const result = await pool.query('INSERT INTO reservations (patient_name, phone_number, desired_date, desired_time, notes) VALUES ($1, $2, $3, $4, $5) RETURNING *', [patientName, phoneNumber, desiredDate, desiredTime, notes]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error('예약 신청 중 오류:', err); res.status(500).send('서버 오류'); } });
