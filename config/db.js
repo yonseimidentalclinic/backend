@@ -27,6 +27,15 @@ const initializeDatabase = async () => {
       // --- 핵심 수정: posts와 consultations 테이블에 이미지 데이터 컬럼을 추가합니다. ---
       `ALTER TABLE posts ADD COLUMN IF NOT EXISTS image_data TEXT;`,
       `ALTER TABLE consultations ADD COLUMN IF NOT EXISTS image_data TEXT;`,
+       
+      // --- 핵심 수정: notices와 faqs 테이블에 이미지 데이터 컬럼을 추가합니다. ---
+      `ALTER TABLE notices ADD COLUMN IF NOT EXISTS image_data TEXT;`,
+      `ALTER TABLE faqs ADD COLUMN IF NOT EXISTS image_data TEXT;`,
+      `ALTER TABLE posts ADD COLUMN IF NOT EXISTS image_data TEXT;`,
+      `ALTER TABLE consultations ADD COLUMN IF NOT EXISTS image_data TEXT;`,
+
+
+
 
       `CREATE TABLE IF NOT EXISTS replies (id SERIAL PRIMARY KEY, consultation_id INTEGER NOT NULL REFERENCES consultations(id) ON DELETE CASCADE, content TEXT NOT NULL, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());`,
       `CREATE TABLE IF NOT EXISTS doctors (id SERIAL PRIMARY KEY, name VARCHAR(100) NOT NULL, position VARCHAR(100) NOT NULL, history TEXT, image_data TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());`,

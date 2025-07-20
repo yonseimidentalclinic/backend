@@ -120,8 +120,31 @@ router.get('/notices/:id', authenticateToken, async (req, res) => {
     }
 });
 
-router.post('/notices', authenticateToken, async (req, res) => { const { title, content, category } = req.body; try { const result = await pool.query('INSERT INTO notices (title, content, category) VALUES ($1, $2, $3) RETURNING *', [title, content, category]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
-router.put('/notices/:id', authenticateToken, async (req, res) => { const { title, content, category } = req.body; try { const result = await pool.query('UPDATE notices SET title = $1, content = $2, category = $3, updated_at = NOW() WHERE id = $4 RETURNING *', [title, content, category, req.params.id]); if (result.rows.length === 0) return res.status(404).send('공지사항을 찾을 수 없습니다.'); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
+// [핵심 수정] 공지사항 생성: 이미지 업로드 기능 추가
+router.post('/notices', authenticateToken, upload.single('image'), async (req, res) => {
+    const { title, content, category } = req.body;
+    const imageData = req.file ? `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}` : null;
+    try {
+        const result = await pool.query(
+            'INSERT INTO notices (title, content, category, image_data) VALUES ($1, $2, $3, $4) RETURNING *',
+            [title, content, category, imageData]
+        );
+        res.status(201).json(toCamelCase(result.rows)[0]);
+    } catch (err) { console.error(err); res.status(500).send('서버 오류'); }
+});
+// [핵심 수정] 공지사항 수정: 이미지 업로드/삭제 기능 추가
+router.put('/notices/:id', authenticateToken, upload.single('image'), async (req, res) => {
+    const { title, content, category, existingImageData } = req.body;
+    const imageData = req.file ? `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}` : existingImageData;
+    try {
+        const result = await pool.query(
+            'UPDATE notices SET title = $1, content = $2, category = $3, image_data = $4, updated_at = NOW() WHERE id = $5 RETURNING *',
+            [title, content, category, imageData, req.params.id]
+        );
+        if (result.rows.length === 0) return res.status(404).send('공지사항을 찾을 수 없습니다.');
+        res.json(toCamelCase(result.rows)[0]);
+    } catch (err) { console.error(err); res.status(500).send('서버 오류'); }
+});
 router.delete('/notices/:id', authenticateToken, async (req, res) => { try { const result = await pool.query('DELETE FROM notices WHERE id = $1', [req.params.id]); if (result.rowCount === 0) return res.status(404).send('공지사항을 찾을 수 없습니다.'); res.status(204).send(); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 
 // --- 자유게시판 관리 ---
@@ -170,8 +193,32 @@ router.put('/cases/:id', authenticateToken, upload.fields([{ name: 'beforeImage'
 router.delete('/cases/:id', authenticateToken, async (req, res) => { try { const result = await pool.query('DELETE FROM case_photos WHERE id = $1', [req.params.id]); if (result.rowCount === 0) return res.status(404).send('치료 사례를 찾을 수 없습니다.'); res.status(204).send(); } catch (err) { console.error('치료 사례 삭제 중 DB 오류:', err); res.status(500).send('서버 오류'); } });
 
 // --- FAQ 관리 ---
-router.post('/faqs', authenticateToken, async (req, res) => { const { category, question, answer } = req.body; try { const result = await pool.query('INSERT INTO faqs (category, question, answer) VALUES ($1, $2, $3) RETURNING *', [category, question, answer]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error('FAQ 추가 중 DB 오류:', err); res.status(500).send('서버 오류'); } });
-router.put('/faqs/:id', authenticateToken, async (req, res) => { const { category, question, answer } = req.body; try { const result = await pool.query('UPDATE faqs SET category = $1, question = $2, answer = $3 WHERE id = $4 RETURNING *', [category, question, answer, req.params.id]); if (result.rows.length === 0) return res.status(404).send('FAQ를 찾을 수 없습니다.'); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error('FAQ 수정 중 DB 오류:', err); res.status(500).send('서버 오류'); } });
+// [핵심 수정] FAQ 생성: 이미지 업로드 기능 추가
+router.post('/faqs', authenticateToken, upload.single('image'), async (req, res) => {
+    const { category, question, answer } = req.body;
+    const imageData = req.file ? `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}` : null;
+    try {
+        const result = await pool.query(
+            'INSERT INTO faqs (category, question, answer, image_data) VALUES ($1, $2, $3, $4) RETURNING *',
+            [category, question, answer, imageData]
+        );
+        res.status(201).json(toCamelCase(result.rows)[0]);
+    } catch (err) { console.error('FAQ 추가 중 DB 오류:', err); res.status(500).send('서버 오류'); }
+});
+
+// [핵심 수정] FAQ 수정: 이미지 업로드/삭제 기능 추가
+router.put('/faqs/:id', authenticateToken, upload.single('image'), async (req, res) => {
+    const { category, question, answer, existingImageData } = req.body;
+    const imageData = req.file ? `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}` : existingImageData;
+    try {
+        const result = await pool.query(
+            'UPDATE faqs SET category = $1, question = $2, answer = $3, image_data = $4 WHERE id = $5 RETURNING *',
+            [category, question, answer, imageData, req.params.id]
+        );
+        if (result.rows.length === 0) return res.status(404).send('FAQ를 찾을 수 없습니다.');
+        res.json(toCamelCase(result.rows)[0]);
+    } catch (err) { console.error('FAQ 수정 중 DB 오류:', err); res.status(500).send('서버 오류'); }
+});
 router.delete('/faqs/:id', authenticateToken, async (req, res) => { try { const result = await pool.query('DELETE FROM faqs WHERE id = $1', [req.params.id]); if (result.rowCount === 0) return res.status(404).send('FAQ를 찾을 수 없습니다.'); res.status(204).send(); } catch (err) { console.error('FAQ 삭제 중 DB 오류:', err); res.status(500).send('서버 오류'); } });
 
 // --- 예약 스케줄 관리 ---
