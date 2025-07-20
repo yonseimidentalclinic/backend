@@ -182,6 +182,30 @@ router.get('/clinic-photos', authenticateToken, async (req, res) => {
 router.post('/clinic-photos', authenticateToken, upload.single('image'), async (req, res) => { const { caption } = req.body; const imageData = req.file ? `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}` : null; if (!imageData) { return res.status(400).send('이미지 파일이 없습니다.'); } try { const result = await pool.query('INSERT INTO clinic_photos (caption, image_data) VALUES ($1, $2) RETURNING *', [caption, imageData]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error('병원 사진 추가 중 DB 오류:', err); res.status(500).send('서버 오류'); } });
 router.delete('/clinic-photos/:id', authenticateToken, async (req, res) => { try { const result = await pool.query('DELETE FROM clinic_photos WHERE id = $1', [req.params.id]); if (result.rowCount === 0) return res.status(404).send('사진 정보를 찾을 수 없습니다.'); res.status(204).send(); } catch (err) { console.error('병원 사진 삭제 중 DB 오류:', err); res.status(500).send('서버 오류'); } });
 
+// [핵심 추가] 병원 둘러보기 사진 캡션 수정 API
+router.put('/clinic-photos/:id', authenticateToken, async (req, res) => {
+    const { caption } = req.body;
+    const { id } = req.params;
+    try {
+        const result = await pool.query(
+            'UPDATE clinic_photos SET caption = $1 WHERE id = $2 RETURNING *',
+            [caption, id]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).send('사진을 찾을 수 없습니다.');
+        }
+        res.json(toCamelCase(result.rows)[0]);
+    } catch (err) {
+        console.error('병원 사진 캡션 수정 중 DB 오류:', err);
+        res.status(500).send('서버 오류');
+    }
+});
+
+
+
+
+
+
 // --- 예약 관리 ---
 router.get('/reservations', authenticateToken, async (req, res) => { try { const result = await pool.query('SELECT * FROM reservations ORDER BY desired_date DESC, created_at DESC'); res.json(toCamelCase(result.rows)); } catch (err) { console.error('예약 목록 조회 오류:', err); res.status(500).send('서버 오류'); } });
 router.put('/reservations/:id/status', authenticateToken, async (req, res) => { const { status } = req.body; try { const result = await pool.query('UPDATE reservations SET status = $1 WHERE id = $2 RETURNING *', [status, req.params.id]); if (result.rows.length === 0) return res.status(404).send('예약 정보를 찾을 수 없습니다.'); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error('예약 상태 변경 오류:', err); res.status(500).send('서버 오류'); } });
