@@ -34,7 +34,8 @@ const initializeDatabase = async () => {
       `ALTER TABLE posts ADD COLUMN IF NOT EXISTS image_data TEXT;`,
       `ALTER TABLE consultations ADD COLUMN IF NOT EXISTS image_data TEXT;`,
 
-
+      // --- 핵심 수정: reviews 테이블에 이미지 데이터 컬럼을 추가합니다. ---
+      `ALTER TABLE reviews ADD COLUMN IF NOT EXISTS image_data TEXT;`,
 
 
       `CREATE TABLE IF NOT EXISTS replies (id SERIAL PRIMARY KEY, consultation_id INTEGER NOT NULL REFERENCES consultations(id) ON DELETE CASCADE, content TEXT NOT NULL, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());`,

@@ -387,7 +387,22 @@ router.get('/reviews', async (req, res) => {
     res.json({ items: toCamelCase(itemsResult.rows), totalPages, currentPage: page });
   } catch (err) { console.error('후기 조회 오류:', err); res.status(500).send('서버 오류'); }
 });
-router.post('/reviews', async (req, res) => { const { patientName, rating, content } = req.body; try { const result = await pool.query('INSERT INTO reviews (patient_name, rating, content) VALUES ($1, $2, $3) RETURNING *', [patientName, rating, content]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error('후기 작성 중 오류:', err); res.status(500).send('서버 오류'); } });
+// [핵심 수정] 치료후기 작성: 이미지 업로드 기능 추가
+router.post('/reviews', upload.single('image'), async (req, res) => { 
+    const { patientName, rating, content } = req.body; 
+    const imageData = req.file ? `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}` : null;
+    try { 
+        const result = await pool.query(
+            'INSERT INTO reviews (patient_name, rating, content, image_data) VALUES ($1, $2, $3, $4) RETURNING *', 
+            [patientName, rating, content, imageData]
+        ); 
+        res.status(201).json(toCamelCase(result.rows)[0]); 
+    } catch (err) { 
+        console.error('후기 작성 중 오류:', err); 
+        res.status(500).send('서버 오류'); 
+    } 
+});
+
 
 // --- [새 기능] 메인 페이지 동적 데이터 ---
 router.get('/home-summary', async (req, res) => {
