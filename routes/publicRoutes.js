@@ -3,31 +3,42 @@
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken'); // 예약 관리를 위한 JWT 추가
+const jwt = require('jsonwebtoken');
 const { pool } = require('../config/db');
 const { toCamelCase } = require('../utils/helpers');
-const upload = require('../middleware/upload'); // 이미지 업로드 미들웨어
+const upload = require('../middleware/upload');
 const saltRounds = 10;
 
-// --- [새 기능] 예약 확인 및 관리를 위한 미들웨어 ---
-const authenticateReservationToken = (req, res, next) => {
+// --- [새 기능] 일반 사용자 인증을 위한 미들웨어 ---
+// 토큰을 검증하여 req.user에 사용자 정보를 추가합니다.
+const authenticateUserToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
-  if (token == null) return res.sendStatus(401);
+  if (token == null) return res.sendStatus(401); // 토큰이 없으면 접근 불가
 
-  jwt.verify(token, process.env.JWT_SECRET, (err, reservation) => {
+  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
     if (err) return res.sendStatus(403);
-    // 토큰의 ID와 URL 파라미터의 ID가 일치하는지 확인
-    if (reservation.id !== parseInt(req.params.id, 10)) {
-      return res.sendStatus(403);
-    }
-    req.reservation = reservation;
+    req.user = user; // user 객체에는 id, username, email 등이 포함됨
     next();
   });
 };
 
+// --- [새 기능] 비로그인 사용자도 허용하는 미들웨어 ---
+// 토큰이 있으면 사용자 정보를 추가하고, 없으면 그냥 통과시킵니다.
+const softAuthenticateUserToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (token == null) {
+    return next(); // 토큰이 없어도 다음 단계로 진행
+  }
 
-
+  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    if (!err) {
+      req.user = user;
+    }
+    next();
+  });
+};
 
 
 // --- 공지사항 ---
@@ -96,22 +107,8 @@ router.get('/posts', async (req, res) => {
   }
 });
 router.get('/posts/:id', async (req, res) => { try { const postResult = await pool.query('SELECT * FROM posts WHERE id = $1', [req.params.id]); if (postResult.rows.length === 0) return res.status(404).send('게시글을 찾을 수 없습니다.'); const commentsResult = await pool.query('SELECT * FROM post_comments WHERE post_id = $1 ORDER BY created_at ASC', [req.params.id]); const post = toCamelCase(postResult.rows)[0]; const comments = toCamelCase(commentsResult.rows); res.json({ ...post, comments }); } catch (err) { console.error(err); res.status(500).send('서버 오류'); }});
-router.post('/posts', async (req, res) => { const { author, password, title, content } = req.body; try { const hashedPassword = await bcrypt.hash(password, saltRounds); const result = await pool.query('INSERT INTO posts (author, password, title, content) VALUES ($1, $2, $3, $4) RETURNING *', [author, hashedPassword, title, content]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
-
-// *** 핵심 수정: 누락된 비밀번호 확인 API를 추가했습니다. ***
-router.post('/posts/:id/verify', async (req, res) => { 
-    try { 
-        const { password } = req.body; 
-        const result = await pool.query('SELECT password FROM posts WHERE id = $1', [req.params.id]); 
-        if (result.rows.length === 0) return res.status(404).json({ success: false, message: '게시글을 찾을 수 없습니다.' }); 
-        const match = await bcrypt.compare(password, result.rows[0].password); 
-        res.json({ success: match }); 
-    } catch (err) { 
-        console.error(err); 
-        res.status(500).json({ success: false, message: '서버 오류' }); 
-    } 
-});
-
+router.post('/posts', upload.single('image'), async (req, res) => { const { author, password, title, content } = req.body; const imageData = req.file ? `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}` : null; try { const hashedPassword = await bcrypt.hash(password, saltRounds); const result = await pool.query('INSERT INTO posts (author, password, title, content, image_data) VALUES ($1, $2, $3, $4, $5) RETURNING *', [author, hashedPassword, title, content, imageData]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
+router.post('/posts/:id/verify', async (req, res) => { try { const { password } = req.body; const result = await pool.query('SELECT password FROM posts WHERE id = $1', [req.params.id]); if (result.rows.length === 0) return res.status(404).json({ success: false, message: '게시글을 찾을 수 없습니다.' }); const match = await bcrypt.compare(password, result.rows[0].password); res.json({ success: match }); } catch (err) { console.error(err); res.status(500).json({ success: false, message: '서버 오류' }); } });
 router.put('/posts/:id', async (req, res) => { const { title, content, password } = req.body; try { const verifyResult = await pool.query('SELECT password FROM posts WHERE id = $1', [req.params.id]); if (verifyResult.rows.length === 0) return res.status(404).send('게시글을 찾을 수 없습니다.'); const match = await bcrypt.compare(password, verifyResult.rows[0].password); if (!match) return res.status(403).send('비밀번호가 올바르지 않습니다.'); const result = await pool.query('UPDATE posts SET title = $1, content = $2, updated_at = NOW() WHERE id = $3 RETURNING *', [title, content, req.params.id]); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 router.delete('/posts/:id', async (req, res) => { const { password } = req.body; try { const verifyResult = await pool.query('SELECT password FROM posts WHERE id = $1', [req.params.id]); if (verifyResult.rows.length === 0) return res.status(404).send('게시글을 찾을 수 없습니다.'); const match = await bcrypt.compare(password, verifyResult.rows[0].password); if (!match) return res.status(403).send('비밀번호가 올바르지 않습니다.'); await pool.query('DELETE FROM posts WHERE id = $1', [req.params.id]); res.status(204).send(); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 
@@ -120,29 +117,6 @@ router.post('/posts/:id/comments', async (req, res) => { const { author, passwor
 router.post('/posts/comments/:commentId/like', async (req, res) => { const { commentId } = req.params; try { const result = await pool.query('UPDATE post_comments SET likes = likes + 1 WHERE id = $1 RETURNING likes', [commentId]); if (result.rows.length === 0) return res.status(404).send('댓글을 찾을 수 없습니다.'); res.status(200).json(result.rows[0]); } catch (err) { console.error('좋아요 처리 중 오류:', err); res.status(500).send('서버 오류'); } });
 router.post('/posts/comments/:commentId/tags', async (req, res) => { const { tag } = req.body; const { commentId } = req.params; if (!tag || !tag.trim()) return res.status(400).send('태그 내용이 없습니다.'); try { const currentTagsResult = await pool.query('SELECT tags FROM post_comments WHERE id = $1', [commentId]); if (currentTagsResult.rows.length === 0) return res.status(404).send('댓글을 찾을 수 없습니다.'); const currentTags = currentTagsResult.rows[0].tags ? currentTagsResult.rows[0].tags.split(',') : []; if (!currentTags.includes(tag.trim())) { currentTags.push(tag.trim()); } const newTags = currentTags.join(','); const result = await pool.query('UPDATE post_comments SET tags = $1 WHERE id = $2 RETURNING tags', [newTags, commentId]); res.status(200).json(result.rows[0]); } catch (err) { console.error('태그 추가 중 오류:', err); res.status(500).send('서버 오류'); } });
 router.delete('/posts/comments/:commentId', async (req, res) => { const { password } = req.body; const { commentId } = req.params; try { const result = await pool.query('SELECT password FROM post_comments WHERE id = $1', [commentId]); if (result.rows.length === 0) return res.status(404).send('댓글을 찾을 수 없습니다.'); const match = await bcrypt.compare(password, result.rows[0].password); if (!match) return res.status(403).send('비밀번호가 올바르지 않습니다.'); await pool.query('DELETE FROM post_comments WHERE id = $1', [commentId]); res.status(204).send(); } catch (err) { console.error('댓글 삭제 중 오류:', err); res.status(500).send('서버 오류'); } });
-
-// [핵심 수정] 자유게시판 글 작성: 이미지 업로드 기능 추가
-router.post('/posts', upload.single('image'), async (req, res) => { 
-    const { author, password, title, content } = req.body; 
-    // multer가 req.file에 이미지 정보를 담아줍니다.
-    const imageData = req.file ? `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}` : null;
-    
-    try { 
-        const hashedPassword = await bcrypt.hash(password, saltRounds); 
-        const result = await pool.query(
-            'INSERT INTO posts (author, password, title, content, image_data) VALUES ($1, $2, $3, $4, $5) RETURNING *', 
-            [author, hashedPassword, title, content, imageData]
-        ); 
-        res.status(201).json(toCamelCase(result.rows)[0]); 
-    } catch (err) { 
-        console.error(err); 
-        res.status(500).send('서버 오류'); 
-    } 
-});
-
-
-
-
 
 // --- 온라인 상담 ---
 router.get('/consultations', async (req, res) => {
@@ -172,35 +146,21 @@ router.get('/consultations', async (req, res) => {
   }
 });
 router.get('/consultations/:id', async (req, res) => { try { const consultationResult = await pool.query('SELECT * FROM consultations WHERE id = $1', [req.params.id]); if (consultationResult.rows.length === 0) return res.status(404).send('상담글을 찾을 수 없습니다.'); const replyResult = await pool.query('SELECT * FROM replies WHERE consultation_id = $1 ORDER BY created_at DESC', [req.params.id]); const consultation = toCamelCase(consultationResult.rows)[0]; const replies = toCamelCase(replyResult.rows); res.json({ ...consultation, replies }); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
-router.post('/consultations', async (req, res) => { const { author, password, title, content, isSecret } = req.body; try { const hashedPassword = await bcrypt.hash(password, saltRounds); const result = await pool.query('INSERT INTO consultations (author, password, title, content, is_secret) VALUES ($1, $2, $3, $4, $5) RETURNING *', [author, hashedPassword, title, content, isSecret]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
-
-// *** 핵심 수정: 누락된 비밀번호 확인 API를 추가했습니다. ***
-router.post('/consultations/:id/verify', async (req, res) => { 
-    try { 
-        const { password } = req.body; 
-        const result = await pool.query('SELECT password FROM consultations WHERE id = $1', [req.params.id]); 
-        if (result.rows.length === 0) return res.status(404).json({ success: false, message: '상담글을 찾을 수 없습니다.' }); 
-        const match = await bcrypt.compare(password, result.rows[0].password); 
-        res.json({ success: match }); 
-    } catch (err) { 
-        console.error(err); 
-        res.status(500).json({ success: false, message: '서버 오류' }); 
-    } 
-});
-
+router.post('/consultations/:id/verify', async (req, res) => { try { const { password } = req.body; const result = await pool.query('SELECT password FROM consultations WHERE id = $1', [req.params.id]); if (result.rows.length === 0) return res.status(404).json({ success: false, message: '상담글을 찾을 수 없습니다.' }); const match = await bcrypt.compare(password, result.rows[0].password); res.json({ success: match }); } catch (err) { console.error(err); res.status(500).json({ success: false, message: '서버 오류' }); } });
 router.put('/consultations/:id', async (req, res) => { const { title, content, password } = req.body; try { const verifyResult = await pool.query('SELECT password FROM consultations WHERE id = $1', [req.params.id]); if (verifyResult.rows.length === 0) return res.status(404).send('상담글을 찾을 수 없습니다.'); const match = await bcrypt.compare(password, verifyResult.rows[0].password); if (!match) return res.status(403).send('비밀번호가 올바르지 않습니다.'); const result = await pool.query('UPDATE consultations SET title = $1, content = $2, updated_at = NOW() WHERE id = $3 RETURNING *', [title, content, req.params.id]); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 router.delete('/consultations/:id', async (req, res) => { const { password } = req.body; try { const verifyResult = await pool.query('SELECT password FROM consultations WHERE id = $1', [req.params.id]); if (verifyResult.rows.length === 0) return res.status(404).send('상담글을 찾을 수 없습니다.'); const match = await bcrypt.compare(password, verifyResult.rows[0].password); if (!match) return res.status(403).send('비밀번호가 올바르지 않습니다.'); await pool.query('DELETE FROM consultations WHERE id = $1', [req.params.id]); res.status(204).send(); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
 
-// [핵심 수정] 온라인상담 글 작성: 이미지 업로드 기능 추가
-router.post('/consultations', upload.single('image'), async (req, res) => { 
+// --- [핵심 수정] 글 작성 시 로그인한 사용자 ID를 저장하도록 수정 ---
+router.post('/consultations', upload.single('image'), softAuthenticateUserToken, async (req, res) => {
     const { author, password, title, content, isSecret } = req.body; 
     const imageData = req.file ? `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}` : null;
+    const userId = req.user ? req.user.id : null; // 로그인했다면 user.id, 아니면 null
 
     try { 
         const hashedPassword = await bcrypt.hash(password, saltRounds); 
         const result = await pool.query(
-            'INSERT INTO consultations (author, password, title, content, is_secret, image_data) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *', 
-            [author, hashedPassword, title, content, isSecret, imageData]
+            'INSERT INTO consultations (author, password, title, content, is_secret, image_data, user_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *', 
+            [author, hashedPassword, title, content, isSecret, imageData, userId]
         ); 
         res.status(201).json(toCamelCase(result.rows)[0]); 
     } catch (err) { 
@@ -208,12 +168,6 @@ router.post('/consultations', upload.single('image'), async (req, res) => {
         res.status(500).send('서버 오류'); 
     } 
 });
-
-
-
-
-
-
 
 // --- 기타 공개 정보 ---
 router.get('/doctors', async (req, res) => { try { const result = await pool.query('SELECT * FROM doctors ORDER BY id ASC'); res.json(toCamelCase(result.rows)); } catch (err) { console.error(err); res.status(500).send('서버 오류'); } });
@@ -292,88 +246,21 @@ router.get('/schedule', async (req, res) => {
     }
 });
 
-// --- 온라인 예약 (Reservations) API (기능 추가) ---
-
-// 1. 예약 신청 (기존 기능)
-router.post('/reservations', async (req, res) => { 
+// --- 예약 및 후기 작성 ---
+router.post('/reservations', softAuthenticateUserToken, async (req, res) => { 
     const { patientName, phoneNumber, desiredDate, desiredTime, notes } = req.body; 
+    const userId = req.user ? req.user.id : null;
     try { 
-        const result = await pool.query('INSERT INTO reservations (patient_name, phone_number, desired_date, desired_time, notes) VALUES ($1, $2, $3, $4, $5) RETURNING *', [patientName, phoneNumber, desiredDate, desiredTime, notes]); 
+        const result = await pool.query(
+            'INSERT INTO reservations (patient_name, phone_number, desired_date, desired_time, notes, user_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *', 
+            [patientName, phoneNumber, desiredDate, desiredTime, notes, userId]
+        ); 
         res.status(201).json(toCamelCase(result.rows)[0]); 
     } catch (err) { 
         console.error('예약 신청 중 오류:', err); 
         res.status(500).send('서버 오류'); 
     } 
 });
-
-// 2. [새 기능] 예약 확인 및 인증 토큰 발급
-router.post('/reservations/verify', async (req, res) => {
-  const { patientName, phoneNumber } = req.body;
-  try {
-    const result = await pool.query(
-      'SELECT id FROM reservations WHERE patient_name = $1 AND phone_number = $2',
-      [patientName, phoneNumber]
-    );
-    if (result.rows.length === 0) {
-      return res.status(404).send('일치하는 예약 정보를 찾을 수 없습니다.');
-    }
-    const reservation = result.rows[0];
-    // 1시간 동안 유효한 임시 토큰 발급
-    const accessToken = jwt.sign({ id: reservation.id, name: patientName }, process.env.JWT_SECRET, { expiresIn: '1h' });
-    res.json({ accessToken, reservationId: reservation.id });
-  } catch (err) {
-    console.error('예약 확인 중 오류:', err);
-    res.status(500).send('서버 오류');
-  }
-});
-
-// 3. [새 기능] 특정 예약 상세 정보 조회 (인증 필요)
-router.get('/reservations/:id', authenticateReservationToken, async (req, res) => {
-  try {
-    const result = await pool.query('SELECT * FROM reservations WHERE id = $1', [req.params.id]);
-    if (result.rows.length === 0) {
-      return res.status(404).send('예약 정보를 찾을 수 없습니다.');
-    }
-    res.json(toCamelCase(result.rows)[0]);
-  } catch (err) {
-    console.error('예약 상세 조회 오류:', err);
-    res.status(500).send('서버 오류');
-  }
-});
-
-// 4. [새 기능] 예약 변경 (인증 필요)
-router.put('/reservations/:id', authenticateReservationToken, async (req, res) => {
-  const { desiredDate, desiredTime, notes } = req.body;
-  try {
-    const result = await pool.query(
-      'UPDATE reservations SET desired_date = $1, desired_time = $2, notes = $3, status = $4 WHERE id = $5 RETURNING *',
-      [desiredDate, desiredTime, notes, 'pending', req.params.id] // 수정 시 상태를 'pending'으로 변경
-    );
-    res.json(toCamelCase(result.rows)[0]);
-  } catch (err) {
-    console.error('예약 변경 중 오류:', err);
-    res.status(500).send('서버 오류');
-  }
-});
-
-// 5. [새 기능] 예약 취소 (인증 필요)
-router.delete('/reservations/:id', authenticateReservationToken, async (req, res) => {
-  try {
-    await pool.query('DELETE FROM reservations WHERE id = $1', [req.params.id]);
-    res.status(204).send(); // 성공적으로 삭제됨 (No Content)
-  } catch (err) {
-    console.error('예약 취소 중 오류:', err);
-    res.status(500).send('서버 오류');
-  }
-});
-
-
-
-
-
-
-// --- 예약 및 후기 작성 ---
-router.post('/reservations', async (req, res) => { const { patientName, phoneNumber, desiredDate, desiredTime, notes } = req.body; try { const result = await pool.query('INSERT INTO reservations (patient_name, phone_number, desired_date, desired_time, notes) VALUES ($1, $2, $3, $4, $5) RETURNING *', [patientName, phoneNumber, desiredDate, desiredTime, notes]); res.status(201).json(toCamelCase(result.rows)[0]); } catch (err) { console.error('예약 신청 중 오류:', err); res.status(500).send('서버 오류'); } });
 router.get('/reviews', async (req, res) => {
   const page = parseInt(req.query.page, 10) || 1;
   const limit = parseInt(req.query.limit, 10) || 5;
@@ -387,7 +274,6 @@ router.get('/reviews', async (req, res) => {
     res.json({ items: toCamelCase(itemsResult.rows), totalPages, currentPage: page });
   } catch (err) { console.error('후기 조회 오류:', err); res.status(500).send('서버 오류'); }
 });
-// [핵심 수정] 치료후기 작성: 이미지 업로드 기능 추가
 router.post('/reviews', upload.single('image'), async (req, res) => { 
     const { patientName, rating, content } = req.body; 
     const imageData = req.file ? `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}` : null;
@@ -403,8 +289,7 @@ router.post('/reviews', upload.single('image'), async (req, res) => {
     } 
 });
 
-
-// --- [새 기능] 메인 페이지 동적 데이터 ---
+// --- 메인 페이지 동적 데이터 ---
 router.get('/home-summary', async (req, res) => {
   try {
     const noticesPromise = pool.query('SELECT id, title, created_at FROM notices ORDER BY created_at DESC LIMIT 3');
@@ -428,8 +313,62 @@ router.get('/home-summary', async (req, res) => {
   }
 });
 
+// --- 회원가입, 로그인, 마이페이지 API ---
+router.post('/auth/register', async (req, res) => {
+  const { username, email, password } = req.body;
+  try {
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+    const newUser = await pool.query(
+      'INSERT INTO users (username, email, password) VALUES ($1, $2, $3) RETURNING id, username, email',
+      [username, email, hashedPassword]
+    );
+    res.status(201).json(toCamelCase(newUser.rows)[0]);
+  } catch (err) {
+    console.error('회원가입 오류:', err);
+    res.status(500).json({ message: '이미 사용 중인 이메일이거나 서버 오류가 발생했습니다.' });
+  }
+});
 
+router.post('/auth/login', async (req, res) => {
+  const { email, password } = req.body;
+  try {
+    const userResult = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    if (userResult.rows.length === 0) {
+      return res.status(401).json({ message: '이메일 또는 비밀번호가 올바르지 않습니다.' });
+    }
+    const user = userResult.rows[0];
+    const match = await bcrypt.compare(password, user.password);
+    if (!match) {
+      return res.status(401).json({ message: '이메일 또는 비밀번호가 올바르지 않습니다.' });
+    }
+    const accessToken = jwt.sign({ id: user.id, username: user.username, email: user.email }, process.env.JWT_SECRET, { expiresIn: '24h' });
+    res.json({ accessToken });
+  } catch (err) {
+    console.error('로그인 오류:', err);
+    res.status(500).send('서버 오류');
+  }
+});
 
+router.get('/auth/me', authenticateUserToken, (req, res) => {
+  res.json(req.user);
+});
 
+router.get('/auth/me/consultations', authenticateUserToken, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM consultations WHERE user_id = $1 ORDER BY created_at DESC', [req.user.id]);
+    res.json(toCamelCase(result.rows));
+  } catch (err) {
+    res.status(500).send('내 상담 내역 조회 오류');
+  }
+});
+
+router.get('/auth/me/reservations', authenticateUserToken, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM reservations WHERE user_id = $1 ORDER BY desired_date DESC', [req.user.id]);
+    res.json(toCamelCase(result.rows));
+  } catch (err) {
+    res.status(500).send('내 예약 내역 조회 오류');
+  }
+});
 
 module.exports = router;

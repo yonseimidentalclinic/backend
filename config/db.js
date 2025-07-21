@@ -19,6 +19,16 @@ const initializeDatabase = async () => {
     
     // 테이블 생성 쿼리들
     const queries = [
+      // --- 핵심 추가 1: users 테이블을 새로 생성합니다. ---
+      `CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(100) NOT NULL,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        password VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );`,
+
+
       `CREATE TABLE IF NOT EXISTS notices (id SERIAL PRIMARY KEY, title VARCHAR(255) NOT NULL, category VARCHAR(100), content TEXT NOT NULL, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());`,
       `ALTER TABLE notices ADD COLUMN IF NOT EXISTS category VARCHAR(100);`,
       `CREATE TABLE IF NOT EXISTS posts (id SERIAL PRIMARY KEY, author VARCHAR(100) NOT NULL, password VARCHAR(255) NOT NULL, title VARCHAR(255) NOT NULL, content TEXT NOT NULL, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());`,
@@ -47,6 +57,9 @@ const initializeDatabase = async () => {
       `ALTER TABLE post_comments ADD COLUMN IF NOT EXISTS likes INTEGER DEFAULT 0;`,
       `ALTER TABLE post_comments ADD COLUMN IF NOT EXISTS tags TEXT;`,
       `CREATE TABLE IF NOT EXISTS reservations (id SERIAL PRIMARY KEY, patient_name VARCHAR(100) NOT NULL, phone_number VARCHAR(100) NOT NULL, desired_date DATE NOT NULL, desired_time VARCHAR(50) NOT NULL, notes TEXT, status VARCHAR(50) DEFAULT 'pending', created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());`,
+      // --- 핵심 추가 2: consultations와 reservations 테이블에 user_id 외래 키를 추가합니다. ---
+      `ALTER TABLE consultations ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;`,
+      `ALTER TABLE reservations ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;`,
       `CREATE TABLE IF NOT EXISTS case_photos (id SERIAL PRIMARY KEY, title VARCHAR(255) NOT NULL, category VARCHAR(100), description TEXT, before_image_data TEXT, after_image_data TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());`,
       `CREATE TABLE IF NOT EXISTS faqs (id SERIAL PRIMARY KEY, category VARCHAR(100) NOT NULL, question TEXT NOT NULL, answer TEXT NOT NULL, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());`,
       `CREATE TABLE IF NOT EXISTS blocked_slots (id SERIAL PRIMARY KEY, slot_date DATE NOT NULL, slot_time VARCHAR(50) NOT NULL, UNIQUE(slot_date, slot_time));`,
