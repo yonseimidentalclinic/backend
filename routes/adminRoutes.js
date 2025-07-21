@@ -255,4 +255,57 @@ router.put('/reviews/:id/approve', authenticateToken, async (req, res) => { cons
 router.post('/reviews/:id/reply', authenticateToken, async (req, res) => { const { reply } = req.body; try { const result = await pool.query('UPDATE reviews SET admin_reply = $1 WHERE id = $2 RETURNING *', [reply, req.params.id]); if (result.rows.length === 0) return res.status(404).send('후기를 찾을 수 없습니다.'); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error('답글 작성 오류:', err); res.status(500).send('서버 오류'); } });
 router.delete('/reviews/:id', authenticateToken, async (req, res) => { try { const result = await pool.query('DELETE FROM reviews WHERE id = $1', [req.params.id]); if (result.rowCount === 0) return res.status(404).send('후기를 찾을 수 없습니다.'); res.status(204).send(); } catch (err) { console.error('후기 삭제 오류:', err); res.status(500).send('서버 오류'); } });
 
+// --- [새 기능] 대시보드 차트용 통계 데이터 API ---
+router.get('/dashboard-charts', authenticateToken, async (req, res) => {
+  try {
+    // 지난 7일간의 일별 상담 접수 현황
+    const weeklyConsultationsQuery = `
+      SELECT 
+        TO_CHAR(DATE_TRUNC('day', created_at), 'YYYY-MM-DD') as date,
+        COUNT(*) as count
+      FROM consultations
+      WHERE created_at >= NOW() - INTERVAL '7 days'
+      GROUP BY DATE_TRUNC('day', created_at)
+      ORDER BY date ASC;
+    `;
+
+    // 지난 6개월간의 월별 게시글(자유게시판+공지사항) 작성 수
+    const monthlyPostsQuery = `
+      SELECT 
+        TO_CHAR(DATE_TRUNC('month', created_at), 'YYYY-MM') as month,
+        COUNT(*) as count
+      FROM (
+        SELECT created_at FROM posts
+        UNION ALL
+        SELECT created_at FROM notices
+      ) as all_posts
+      WHERE created_at >= DATE_TRUNC('month', NOW() - INTERVAL '5 months')
+      GROUP BY DATE_TRUNC('month', created_at)
+      ORDER BY month ASC;
+    `;
+
+    const [weeklyResult, monthlyResult] = await Promise.all([
+      pool.query(weeklyConsultationsQuery),
+      pool.query(monthlyPostsQuery)
+    ]);
+
+    res.json({
+      weeklyConsultations: toCamelCase(weeklyResult.rows),
+      monthlyPosts: toCamelCase(monthlyResult.rows),
+    });
+
+  } catch (err) {
+    console.error('대시보드 차트 데이터 조회 오류:', err);
+    res.status(500).send('서버 오류');
+  }
+});
+
+
+
+
+
+
+
+
+
 module.exports = router;
