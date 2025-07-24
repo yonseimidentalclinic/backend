@@ -277,3 +277,4 @@ router.post('/reviews/:id/reply', authenticateToken, async (req, res) => { const
 router.delete('/reviews/:id', authenticateToken, async (req, res) => { try { const result = await pool.query('DELETE FROM reviews WHERE id = $1', [req.params.id]); if (result.rowCount === 0) return res.status(404).send('후기를 찾을 수 없습니다.'); res.status(204).send(); } catch (err) { console.error('후기 삭제 오류:', err); res.status(500).send('서버 오류'); } });
 
 module.exports = router;
+// /middleware/auth.js
