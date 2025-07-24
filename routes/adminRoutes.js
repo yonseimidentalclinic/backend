@@ -3,10 +3,12 @@
 const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt');
 const { pool } = require('../config/db');
 const { toCamelCase } = require('../utils/helpers');
 const { authenticateToken } = require('../middleware/auth');
 const upload = require('../middleware/upload');
+const saltRounds = 10;
 
 // --- 관리자 인증 및 대시보드 ---
 router.post('/login', async (req, res) => {
@@ -275,6 +277,51 @@ router.get('/reviews', authenticateToken, async (req, res) => { try { const resu
 router.put('/reviews/:id/approve', authenticateToken, async (req, res) => { const { isApproved } = req.body; try { const result = await pool.query('UPDATE reviews SET is_approved = $1 WHERE id = $2 RETURNING *', [isApproved, req.params.id]); if (result.rows.length === 0) return res.status(404).send('후기를 찾을 수 없습니다.'); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error('후기 승인 오류:', err); res.status(500).send('서버 오류'); } });
 router.post('/reviews/:id/reply', authenticateToken, async (req, res) => { const { reply } = req.body; try { const result = await pool.query('UPDATE reviews SET admin_reply = $1 WHERE id = $2 RETURNING *', [reply, req.params.id]); if (result.rows.length === 0) return res.status(404).send('후기를 찾을 수 없습니다.'); res.json(toCamelCase(result.rows)[0]); } catch (err) { console.error('답글 작성 오류:', err); res.status(500).send('서버 오류'); } });
 router.delete('/reviews/:id', authenticateToken, async (req, res) => { try { const result = await pool.query('DELETE FROM reviews WHERE id = $1', [req.params.id]); if (result.rowCount === 0) return res.status(404).send('후기를 찾을 수 없습니다.'); res.status(204).send(); } catch (err) { console.error('후기 삭제 오류:', err); res.status(500).send('서버 오류'); } });
+
+// --- [새 기능] 회원 관리 API ---
+
+// 1. 모든 회원 목록 조회
+router.get('/users', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT id, username, email, created_at FROM users ORDER BY id ASC');
+    res.json(toCamelCase(result.rows));
+  } catch (err) {
+    console.error('회원 목록 조회 오류:', err);
+    res.status(500).send('서버 오류');
+  }
+});
+
+// 2. 특정 회원 비밀번호 초기화
+router.put('/users/:id/reset-password', authenticateToken, async (req, res) => {
+  const { newPassword } = req.body;
+  const { id } = req.params;
+  if (!newPassword) {
+    return res.status(400).send('새로운 비밀번호를 입력해야 합니다.');
+  }
+  try {
+    const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
+    await pool.query(
+      'UPDATE users SET password = $1 WHERE id = $2',
+      [hashedPassword, id]
+    );
+    res.status(200).send('비밀번호가 성공적으로 초기화되었습니다.');
+  } catch (err) {
+    console.error('비밀번호 초기화 오류:', err);
+    res.status(500).send('서버 오류');
+  }
+});
+
+
+// (기타 모든 API는 기존과 동일)
+// ...
+
+
+
+
+
+
+
+
 
 module.exports = router;
 // /middleware/auth.js
