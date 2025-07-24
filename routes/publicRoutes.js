@@ -105,7 +105,8 @@ router.get('/posts', async (req, res) => {
     const countResult = await pool.query(countQuery, queryParams);
     const totalItems = parseInt(countResult.rows[0].count, 10);
     const totalPages = Math.ceil(totalItems / limit);
-    const itemsQuery = `SELECT id, title, author, created_at, updated_at, user_id ${baseQuery} ${whereClause} ORDER BY created_at DESC LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
+    // [수정된 부분] SELECT 절에서 user_id를 제거하여 에러를 해결합니다.
+    const itemsQuery = `SELECT id, title, author, created_at, updated_at ${baseQuery} ${whereClause} ORDER BY created_at DESC LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
     queryParams.push(limit, offset);
     const itemsResult = await pool.query(itemsQuery, queryParams);
     res.json({ items: toCamelCase(itemsResult.rows), totalPages, currentPage: page, totalItems });
