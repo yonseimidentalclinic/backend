@@ -311,6 +311,28 @@ router.put('/users/:id/reset-password', authenticateToken, async (req, res) => {
   }
 });
 
+// --- [새 기능] 대시보드 최신 활동 피드 API ---
+router.get('/dashboard/activity-feed', authenticateToken, async (req, res) => {
+  try {
+    const query = `
+      SELECT 'reservation' as type, id, patient_name as title, created_at, status FROM reservations
+      UNION ALL
+      SELECT 'review' as type, id, patient_name as title, created_at, is_approved::text as status FROM reviews
+      UNION ALL
+      SELECT 'consultation' as type, id, title, created_at, is_answered::text as status FROM consultations
+      UNION ALL
+      SELECT 'post' as type, id, title, created_at, null as status FROM posts
+      ORDER BY created_at DESC
+      LIMIT 10;
+    `;
+    const result = await pool.query(query);
+    res.json(toCamelCase(result.rows));
+  } catch (err) {
+    console.error('최신 활동 피드 조회 오류:', err);
+    res.status(500).send('서버 오류');
+  }
+});
+
 
 // (기타 모든 API는 기존과 동일)
 // ...
